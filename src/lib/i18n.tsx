@@ -20,7 +20,10 @@ type Dict = {
   capture: {
     kicker: string; h2: string; lede: string;
     frameHint: string; openCamera: string; back: string; upload: string;
+    shoot: string; close: string; torchOn: string; torchOff: string;
+    cameraDenied: string;
   };
+  history: { title: string; clear: string; empty: string; ago: (s: string) => string };
   confirm: {
     kicker: string; h2: string; retake: string;
     productLabel: string; productPlaceholder: string; reading: string;
