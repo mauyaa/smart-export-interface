@@ -16,6 +16,8 @@ import { useI18n, type Lang } from "@/lib/i18n";
 import { getHistory, recordCheck, clearHistory, type HistoryEntry } from "@/lib/history";
 import { trackEvent } from "@/lib/telemetry";
 import { openRearCamera, captureFrame, type CameraSession } from "@/lib/camera";
+import ambientLeaves from "@/assets/ambient-leaves.jpg.asset.json";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -183,7 +185,8 @@ function SmartExportsApp() {
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-background text-foreground">
       <div className="paper-grain pointer-events-none absolute inset-0 opacity-60" />
-      <div className="relative mx-auto flex min-h-[100dvh] w-full max-w-[440px] flex-col px-6 pb-10 pt-6">
+      <AmbientPanel />
+      <div className="relative mx-auto flex min-h-[100dvh] w-full max-w-[440px] flex-col px-6 pb-10 pt-6 lg:mx-0 lg:ml-[max(3rem,calc(50vw-30rem))]">
         <TopBar onReset={step !== "intro" ? reset : undefined} />
 
         <main className="flex-1">
@@ -265,6 +268,43 @@ function TopBar({ onReset }: { onReset?: () => void }) {
         )}
       </div>
     </header>
+  );
+}
+
+function AmbientPanel() {
+  // Decorative only — hidden on mobile so the design brief is untouched on phones.
+  // On lg+ it fills the right half behind a soft paper-tinted wash + heavy blur.
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-y-0 right-0 hidden w-1/2 overflow-hidden lg:block"
+    >
+      <img
+        src={ambientLeaves.url}
+        alt=""
+        width={1024}
+        height={1536}
+        loading="lazy"
+        className="absolute inset-0 h-full w-full scale-110 object-cover opacity-80"
+        style={{ filter: "blur(28px) saturate(115%)" }}
+      />
+      {/* Fade into the paper column on the left so the boundary is invisible */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(to right, var(--paper) 0%, color-mix(in oklab, var(--paper) 70%, transparent) 22%, transparent 55%)",
+        }}
+      />
+      {/* Warm wash to harmonize with the clay palette */}
+      <div
+        className="absolute inset-0 mix-blend-multiply"
+        style={{
+          background:
+            "linear-gradient(135deg, color-mix(in oklab, var(--paper) 35%, transparent), color-mix(in oklab, var(--primary) 12%, transparent))",
+        }}
+      />
+    </div>
   );
 }
 
