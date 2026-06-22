@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   COMMON_CROPS,
+  NetworkError,
   checkFertilizer,
   escalate,
   extractLabel,
@@ -10,6 +11,7 @@ import {
   type ResultCard,
   type RiskLevel,
 } from "@/lib/api";
+import { compressImage } from "@/lib/image";
 import { useI18n, type Lang } from "@/lib/i18n";
 
 export const Route = createFileRoute("/")({
@@ -38,11 +40,29 @@ function SmartExportsApp() {
   const [crop, setCrop] = useState<string>("");
   const [result, setResult] = useState<ResultCard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [escalated, setEscalated] = useState(false);
+  const [escalated, setEscalated] = useState<{ ticket: string } | null>(null);
+  const [slow, setSlow] = useState(false);
+
+  // Track every in-flight request so we can cancel on back / reset / unmount.
+  const inflight = useRef<Set<AbortController>>(new Set());
+  const newSignal = useCallback(() => {
+    const c = new AbortController();
+    inflight.current.add(c);
+    return {
+      signal: c.signal,
+      done: () => inflight.current.delete(c),
+    };
+  }, []);
+  const abortAll = useCallback(() => {
+    for (const c of inflight.current) c.abort();
+    inflight.current.clear();
+  }, []);
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
+  useEffect(() => () => abortAll(), [abortAll]);
 
   const reset = () => {
+    abortAll();
     setStep("intro");
     setPhoto(null);
     setProduct("");
@@ -50,53 +70,86 @@ function SmartExportsApp() {
     setCrop("");
     setResult(null);
     setError(null);
-    setEscalated(false);
+    setEscalated(null);
+    setSlow(false);
   };
 
-  const onPhoto = async (file: File) => {
+  const onPhoto = async (raw: File) => {
     setError(null);
+    setSlow(false);
+    const file = await compressImage(raw);
     const url = URL.createObjectURL(file);
     setPhoto({ file, url });
     setStep("confirm");
     setExtracting(true);
+    const { signal, done } = newSignal();
     try {
-      const r: ExtractLabelResponse = await extractLabel(file);
+      const r: ExtractLabelResponse = await extractLabel(file, {
+        signal,
+        onSlow: () => setSlow(true),
+      });
+      if (signal.aborted) return;
       setProduct(r.product_name ?? "");
       setIngredients((r.possible_ingredients ?? []).filter((s): s is string => typeof s === "string" && s.length > 0));
       if (!r.product_name) setError(t.errors.ocrEmpty);
     } catch (e) {
-      setError(e instanceof ApiError ? e.detail : t.errors.ocrFail);
+      if (signal.aborted) return;
+      if (e instanceof ApiError) setError(e.detail);
+      else if (e instanceof NetworkError) setError(t.errors.network);
+      else setError(t.errors.ocrFail);
     } finally {
+      done();
       setExtracting(false);
+      setSlow(false);
     }
   };
 
   const runCheck = async () => {
     if (!product.trim() || !crop) return;
     setError(null);
+    setSlow(false);
     setStep("loading");
+    const { signal, done } = newSignal();
     try {
-      const r = await checkFertilizer({ fertilizer_name: product.trim(), crop_name: crop });
+      const r = await checkFertilizer(
+        { fertilizer_name: product.trim(), crop_name: crop },
+        { signal, onSlow: () => setSlow(true) },
+      );
+      if (signal.aborted) return;
       setResult(r);
       setStep("result");
     } catch (e) {
+      if (signal.aborted) return;
       if (e instanceof ApiError && e.status === 404) {
         setStep("escalate");
         return;
       }
-      setError(e instanceof ApiError ? e.detail : t.errors.generic);
+      if (e instanceof ApiError) setError(e.detail);
+      else if (e instanceof NetworkError) setError(t.errors.network);
+      else setError(t.errors.generic);
       setStep("confirm");
+    } finally {
+      done();
+      setSlow(false);
     }
   };
 
   const submitEscalate = async (contact: string, notes: string) => {
-    await escalate({
-      fertilizer_name: product.trim(),
-      crop_name: crop,
-      farmer_contact: contact || undefined,
-      notes: notes || undefined,
-    });
-    setEscalated(true);
+    const { signal, done } = newSignal();
+    try {
+      const r = await escalate(
+        {
+          fertilizer_name: product.trim(),
+          crop_name: crop,
+          farmer_contact: contact || undefined,
+          notes: notes || undefined,
+        },
+        { signal },
+      );
+      setEscalated({ ticket: r.ticket });
+    } finally {
+      done();
+    }
   };
 
   return (
@@ -108,7 +161,7 @@ function SmartExportsApp() {
         <main className="flex-1">
           {step === "intro" && <Intro onStart={() => setStep("capture")} />}
           {step === "capture" && (
-            <Capture onPhoto={onPhoto} onBack={() => setStep("intro")} />
+            <Capture onPhoto={onPhoto} onBack={() => { abortAll(); setStep("intro"); }} />
           )}
           {step === "confirm" && photo && (
             <Confirm
@@ -119,12 +172,20 @@ function SmartExportsApp() {
               crop={crop}
               setCrop={setCrop}
               extracting={extracting}
+              slow={slow}
               error={error}
               onSubmit={runCheck}
-              onRetake={() => { setPhoto(null); setProduct(""); setIngredients([]); setStep("capture"); }}
+              onRetake={() => { abortAll(); setPhoto(null); setProduct(""); setIngredients([]); setStep("capture"); }}
             />
           )}
-          {step === "loading" && <Loading product={product} crop={crop} />}
+          {step === "loading" && (
+            <Loading
+              product={product}
+              crop={crop}
+              slow={slow}
+              onCancel={() => { abortAll(); setStep("confirm"); }}
+            />
+          )}
           {step === "result" && result && (
             <Result result={result} onAgain={reset} onEscalate={() => setStep("escalate")} />
           )}
