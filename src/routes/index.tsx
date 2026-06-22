@@ -279,8 +279,11 @@ function Footer() {
 
 /* ---------- 01 · Intro ---------- */
 
-function Intro({ onStart }: { onStart: () => void }) {
+function Intro({ onStart, onPick }: { onStart: () => void; onPick: (e: HistoryEntry) => void }) {
   const { t } = useI18n();
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  useEffect(() => { setHistory(getHistory()); }, []);
+
   return (
     <section className="animate-fade-up pt-10">
       <StepLabel index="01" label={t.intro.kicker} />
@@ -312,8 +315,53 @@ function Intro({ onStart }: { onStart: () => void }) {
           {t.intro.note}
         </p>
       </div>
+
+      {history.length > 0 && (
+        <div className="mt-12">
+          <div className="hairline mb-4" />
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              {t.history.title}
+            </p>
+            <button
+              onClick={() => { clearHistory(); setHistory([]); }}
+              className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
+            >
+              {t.history.clear}
+            </button>
+          </div>
+          <ul className="mt-3 divide-y divide-border">
+            {history.map((h) => (
+              <li key={`${h.product}-${h.crop}-${h.ts}`}>
+                <button
+                  onClick={() => onPick(h)}
+                  className="flex w-full items-center justify-between gap-3 py-3 text-left"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-display text-[18px] leading-tight tracking-tight">
+                      {h.product}
+                    </span>
+                    <span className="block text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                      {h.crop} · {t.history.ago(timeAgo(h.ts))}
+                    </span>
+                  </span>
+                  <RiskDot risk={h.risk} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
+}
+
+function RiskDot({ risk }: { risk: RiskLevel }) {
+  const cls =
+    risk === "Safe" ? "bg-[color:var(--safe)]" :
+    risk === "Risky" ? "bg-[color:var(--risky)]" :
+    "bg-[color:var(--unclear)]";
+  return <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} aria-label={risk} />;
 }
 
 function Bullet({ n, title, body }: { n: string; title: string; body: string }) {
@@ -332,49 +380,144 @@ function Bullet({ n, title, body }: { n: string; title: string; body: string }) 
 
 function Capture({ onPhoto, onBack }: { onPhoto: (f: File) => void; onBack: () => void }) {
   const { t } = useI18n();
-  const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [session, setSession] = useState<CameraSession | null>(null);
+  const [torch, setTorchState] = useState(false);
+  const [denied, setDenied] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const startCamera = useCallback(async () => {
+    trackEvent("capture_open_camera");
+    try {
+      const s = await openRearCamera();
+      setSession(s);
+      setDenied(false);
+      if (videoRef.current) {
+        videoRef.current.srcObject = s.stream;
+        await videoRef.current.play().catch(() => {});
+      }
+    } catch {
+      setDenied(true);
+    }
+  }, []);
+
+  useEffect(() => () => { session?.stop(); }, [session]);
+
+  // Attach the stream if the <video> mounts after the session is ready.
+  useEffect(() => {
+    if (session && videoRef.current && !videoRef.current.srcObject) {
+      videoRef.current.srcObject = session.stream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [session]);
+
+  const toggleTorch = async () => {
+    if (!session) return;
+    const next = !torch;
+    const ok = await session.setTorch(next);
+    if (ok) {
+      setTorchState(next);
+      trackEvent("capture_torch_toggle", { ok: next });
+    }
+  };
+
+  const shoot = async () => {
+    if (!videoRef.current || busy) return;
+    setBusy(true);
+    try {
+      const file = await captureFrame(videoRef.current);
+      session?.stop();
+      setSession(null);
+      onPhoto(file);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeCamera = () => {
+    session?.stop();
+    setSession(null);
+    setTorchState(false);
+  };
+
   return (
     <section className="animate-fade-up pt-10">
       <StepLabel index="02" label={t.capture.kicker} />
       <h2 className="mt-6 font-display text-[34px] leading-[1] tracking-tight">{t.capture.h2}</h2>
       <p className="mt-4 max-w-[34ch] text-[14px] text-muted-foreground">{t.capture.lede}</p>
 
-      <div className="mt-8 aspect-[4/5] w-full rounded-md border border-dashed border-border bg-card/40 p-3">
-        <div className="flex h-full w-full items-center justify-center rounded-sm border border-border/60 bg-paper">
-          <div className="text-center">
-            <CameraIcon className="mx-auto h-10 w-10 text-muted-foreground" />
-            <p className="mt-3 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              {t.capture.frameHint}
-            </p>
-          </div>
+      <div className="relative mt-8 aspect-[4/5] w-full overflow-hidden rounded-md border border-dashed border-border bg-card/40 p-3">
+        <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-sm border border-border/60 bg-paper">
+          {session ? (
+            <>
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+              {/* Framing guide */}
+              <div className="pointer-events-none absolute inset-6 rounded-sm border border-white/70 mix-blend-difference" />
+              {session.hasTorch && (
+                <button
+                  onClick={toggleTorch}
+                  className="absolute right-3 top-3 rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur"
+                >
+                  {torch ? t.capture.torchOn : t.capture.torchOff}
+                </button>
+              )}
+              <button
+                onClick={closeCamera}
+                className="absolute left-3 top-3 rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur"
+              >
+                {t.capture.close}
+              </button>
+            </>
+          ) : (
+            <div className="text-center">
+              <CameraIcon className="mx-auto h-10 w-10 text-muted-foreground" />
+              <p className="mt-3 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                {t.capture.frameHint}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
       <input
-        ref={cameraRef}
+        ref={fileRef}
         type="file"
         accept="image/*"
         capture="environment"
         className="hidden"
-        onChange={(e) => e.target.files?.[0] && onPhoto(e.target.files[0])}
-      />
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => e.target.files?.[0] && onPhoto(e.target.files[0])}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) { trackEvent("capture_upload_file"); onPhoto(f); }
+        }}
       />
 
+      {denied && (
+        <p className="mt-4 rounded-sm border border-border bg-card px-3 py-2 text-[12px] text-muted-foreground">
+          {t.capture.cameraDenied}
+        </p>
+      )}
+
       <div className="mt-10">
-        <PrimaryButton onClick={() => cameraRef.current?.click()}>
-          <CameraIcon className="mr-2 h-4 w-4" />
-          {t.capture.openCamera}
-        </PrimaryButton>
+        {session ? (
+          <PrimaryButton onClick={shoot} disabled={busy}>
+            <CameraIcon className="mr-2 h-4 w-4" />
+            {t.capture.shoot}
+          </PrimaryButton>
+        ) : (
+          <PrimaryButton onClick={startCamera}>
+            <CameraIcon className="mr-2 h-4 w-4" />
+            {t.capture.openCamera}
+          </PrimaryButton>
+        )}
         <div className="mt-3 flex items-center justify-between">
           <button
-            onClick={onBack}
+            onClick={() => { closeCamera(); onBack(); }}
             className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground hover:text-foreground"
           >
             {t.capture.back}
@@ -390,6 +533,25 @@ function Capture({ onPhoto, onBack }: { onPhoto: (f: File) => void; onBack: () =
     </section>
   );
 }
+
+function timeAgo(ts: number): string {
+  const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+}
+
+function normalizeRisk(r: unknown): RiskLevel {
+  const s = String(r ?? "").toLowerCase();
+  if (s === "safe") return "Safe";
+  if (s === "risky") return "Risky";
+  return "Unclear";
+}
+
 
 /* ---------- 03 · Confirm ---------- */
 
