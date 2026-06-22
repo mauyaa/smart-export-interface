@@ -98,6 +98,28 @@ Phone photos are 3–8 MB raw. Before `extractLabel()` is called, `compressImage
 
 Net effect on a 3G connection: ~20s upload → ~2s upload, and the preview thumbnail matches exactly what the server sees.
 
+### Live camera + torch (`src/lib/camera.ts`)
+
+The Capture screen runs a live `getUserMedia` preview when the browser allows it. Frame is grabbed straight from the `<video>` element to a JPEG via `<canvas>` (quality 0.92) and handed to the same `compressImage()` → `extractLabel()` pipeline as a file upload.
+
+* **Rear camera** is requested with `facingMode: { ideal: "environment" }`.
+* **Torch toggle** is shown only when `track.getCapabilities().torch === true` (Chrome on Android, most modern phones). Toggling calls `applyConstraints({ advanced: [{ torch }] })`. iOS Safari hides the torch API entirely — the button just won't render there.
+* If permission is denied or the API is missing, the screen falls back to the native file-input flow (`<input type="file" capture="environment">`) without breaking.
+* The stream is stopped on Back, Close, Capture, and unmount. No camera light is ever left on.
+
+### Recent checks (`src/lib/history.ts`)
+
+Each successful `/check` writes a `{ product, crop, risk, ts }` record to `localStorage.smartexports.history.v1`, deduped on `(product, crop)`, capped to 10 entries. The Intro screen lists them under a "Recently checked" divider; tapping one skips Capture/Confirm and re-runs the check (useful when a farmer wants to verify the same product against a different batch). Cleared with one tap; no PII.
+
+### Telemetry (`src/lib/telemetry.ts`)
+
+A single `trackEvent(name, data?)` chokepoint:
+
+* **Always** appends to a ring buffer in `localStorage.smartexports.events` (capped at 200). Field teams can `JSON.parse(localStorage.smartexports.events)` on a farmer's phone to reconstruct exactly what happened.
+* **Optionally** POSTs each event via `navigator.sendBeacon` to `VITE_SMARTEXPORTS_ANALYTICS` if it's set (any endpoint that accepts `application/json`).
+* Payloads are a strict whitelist — `crop`, `risk`, `matched_via`, `status`, `reason`, `lang`, `ok`. **Never** raw product names, contact details, or photos.
+* Events covered: `app_open`, `lang_switch`, `capture_open_camera`, `capture_torch_toggle`, `capture_upload_file`, `ocr_success`/`ocr_empty`/`ocr_error`, `check_submit`/`check_result`/`check_not_found`/`check_error`, `escalate_submit`/`escalate_done`, `share_whatsapp`, `history_open`.
+
 ### Escalation receipts
 
 `escalate()` generates a client-side ticket reference (`SX-XXXXXX`, Crockford base32, ~1 in a billion collision) and prepends it to `notes` so it's stored alongside the case in the backend. The Done screen shows the ticket in a bordered card with a copy button — the user has something concrete to quote when they follow up. When the backend adds a server-side ticket field, swap `makeTicket()` for the server value with no UI change.
@@ -205,6 +227,8 @@ To add true offline behavior later, follow the project's PWA skill and wire `vit
 * `__root.tsx` defines the global title, description, OG + Twitter cards, theme color, manifest link, and apple touch icon.
 * `routes/index.tsx` overrides title + description for the home route. Both are localized in spirit (English copy is the canonical entry point for search engines; the in-app toggle handles users).
 * Viewport uses `viewport-fit=cover` so the design respects the iOS notch.
+* `public/robots.txt` allows all crawlers and points to `/sitemap.xml`.
+* `src/routes/sitemap[.]xml.ts` is a TanStack server route emitting a valid `urlset`. Add new public routes to its `entries` array. `BASE_URL` is intentionally empty until a custom domain is set — relative URLs validate correctly in most tools.
 
 ---
 
@@ -253,18 +277,22 @@ CI / deploy targets that work out of the box: Cloudflare Pages, Vercel, Netlify,
 src/
 ├── lib/
 │   ├── api.ts              # typed client + retry/abort/timeout + COMMON_CROPS + makeTicket
+│   ├── camera.ts           # getUserMedia rear-camera session + torch toggle + frame capture
+│   ├── history.ts          # localStorage recent-checks store (capped, deduped, no PII)
 │   ├── image.ts            # client-side downscale + JPEG recompression for uploads
+│   ├── telemetry.ts        # event ring buffer + optional sendBeacon to VITE_SMARTEXPORTS_ANALYTICS
 │   └── i18n.tsx            # LanguageProvider, dictionaries (en / sw)
 ├── routes/
 │   ├── __root.tsx          # html shell, fonts, manifest, OG meta, providers
-│   └── index.tsx           # full SmartExports app: state machine + 6 screens
+│   ├── index.tsx           # full SmartExports app: state machine + 6 screens
+│   └── sitemap[.]xml.ts    # /sitemap.xml server route
 ├── styles.css              # design tokens (oklch), risk palette, utilities
 └── router.tsx              # TanStack Start bootstrap (untouched)
 
 public/
 ├── manifest.webmanifest    # PWA manifest (display: standalone)
+├── robots.txt              # Allow: / + sitemap pointer
 └── app-icon.png            # 512×512 maskable icon
 ```
 
-
-That's the whole frontend. Anything else you want it to do (offline queue, history of past checks, Swahili voice prompts, a map of last-mile co-op offices) hooks cleanly into the same primitives: add a screen to the state machine, a key to the dictionary, and — if it needs the backend — a typed function in `lib/api.ts`.
+That's the whole frontend. Anything else you want it to do (offline queue, server-side history, Swahili voice prompts, a map of last-mile co-op offices) hooks cleanly into the same primitives: add a screen to the state machine, a key to the dictionary, an event in `telemetry.ts`, and — if it needs the backend — a typed function in `lib/api.ts`.

@@ -20,7 +20,10 @@ type Dict = {
   capture: {
     kicker: string; h2: string; lede: string;
     frameHint: string; openCamera: string; back: string; upload: string;
+    shoot: string; close: string; torchOn: string; torchOff: string;
+    cameraDenied: string;
   };
+  history: { title: string; clear: string; empty: string; ago: (s: string) => string };
   confirm: {
     kicker: string; h2: string; retake: string;
     productLabel: string; productPlaceholder: string; reading: string;
@@ -72,6 +75,17 @@ const en: Dict = {
     openCamera: "Open camera",
     back: "← Back",
     upload: "Upload from gallery",
+    shoot: "Capture",
+    close: "Close",
+    torchOn: "Torch on",
+    torchOff: "Torch off",
+    cameraDenied: "Camera unavailable. Upload a photo from your gallery instead.",
+  },
+  history: {
+    title: "Recently checked",
+    clear: "Clear",
+    empty: "No checks yet.",
+    ago: (s) => `${s} ago`,
   },
   confirm: {
     kicker: "Confirm",
@@ -165,6 +179,17 @@ const sw: Dict = {
     openCamera: "Fungua kamera",
     back: "← Rudi",
     upload: "Pakia kutoka kwenye picha",
+    shoot: "Piga",
+    close: "Funga",
+    torchOn: "Tochi imewaka",
+    torchOff: "Tochi imezimwa",
+    cameraDenied: "Kamera haipatikani. Tumia picha kutoka kwenye gallery.",
+  },
+  history: {
+    title: "Ukaguzi wa hivi karibuni",
+    clear: "Futa",
+    empty: "Hakuna ukaguzi bado.",
+    ago: (s) => `${s} zilizopita`,
   },
   confirm: {
     kicker: "Thibitisha",

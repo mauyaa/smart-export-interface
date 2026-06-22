@@ -13,6 +13,9 @@ import {
 } from "@/lib/api";
 import { compressImage } from "@/lib/image";
 import { useI18n, type Lang } from "@/lib/i18n";
+import { getHistory, recordCheck, clearHistory, type HistoryEntry } from "@/lib/history";
+import { trackEvent } from "@/lib/telemetry";
+import { openRearCamera, captureFrame, type CameraSession } from "@/lib/camera";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -60,6 +63,7 @@ function SmartExportsApp() {
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
   useEffect(() => () => abortAll(), [abortAll]);
+  useEffect(() => { trackEvent("app_open"); }, []);
 
   const reset = () => {
     abortAll();
@@ -72,6 +76,55 @@ function SmartExportsApp() {
     setError(null);
     setEscalated(null);
     setSlow(false);
+  };
+
+  // Re-check a product from history with one tap.
+  const reCheckFromHistory = (entry: HistoryEntry) => {
+    trackEvent("history_open", { crop: entry.crop });
+    setProduct(entry.product);
+    setCrop(entry.crop);
+    setPhoto(null);
+    setIngredients([]);
+    setResult(null);
+    setError(null);
+    setEscalated(null);
+    setSlow(false);
+    // Skip capture/confirm — go straight to the check.
+    void runCheckWith(entry.product, entry.crop);
+  };
+
+  const runCheckWith = async (p: string, c: string) => {
+    if (!p.trim() || !c) return;
+    setError(null);
+    setSlow(false);
+    setStep("loading");
+    trackEvent("check_submit", { crop: c });
+    const { signal, done } = newSignal();
+    try {
+      const r = await checkFertilizer(
+        { fertilizer_name: p.trim(), crop_name: c },
+        { signal, onSlow: () => setSlow(true) },
+      );
+      if (signal.aborted) return;
+      setResult(r);
+      setStep("result");
+      recordCheck({ product: r.fertilizer, crop: r.crop, risk: normalizeRisk(r.risk_level) });
+      trackEvent("check_result", { crop: r.crop, risk: r.risk_level, matched_via: r.matched_via });
+    } catch (e) {
+      if (signal.aborted) return;
+      if (e instanceof ApiError && e.status === 404) {
+        trackEvent("check_not_found", { crop: c });
+        setStep("escalate");
+        return;
+      }
+      if (e instanceof ApiError) { setError(e.detail); trackEvent("check_error", { status: e.status }); }
+      else if (e instanceof NetworkError) { setError(t.errors.network); trackEvent("check_error", { reason: "network" }); }
+      else { setError(t.errors.generic); trackEvent("check_error", { reason: "unknown" }); }
+      setStep("confirm");
+    } finally {
+      done();
+      setSlow(false);
+    }
   };
 
   const onPhoto = async (raw: File) => {
@@ -91,12 +144,13 @@ function SmartExportsApp() {
       if (signal.aborted) return;
       setProduct(r.product_name ?? "");
       setIngredients((r.possible_ingredients ?? []).filter((s): s is string => typeof s === "string" && s.length > 0));
-      if (!r.product_name) setError(t.errors.ocrEmpty);
+      if (!r.product_name) { setError(t.errors.ocrEmpty); trackEvent("ocr_empty"); }
+      else trackEvent("ocr_success");
     } catch (e) {
       if (signal.aborted) return;
-      if (e instanceof ApiError) setError(e.detail);
-      else if (e instanceof NetworkError) setError(t.errors.network);
-      else setError(t.errors.ocrFail);
+      if (e instanceof ApiError) { setError(e.detail); trackEvent("ocr_error", { status: e.status }); }
+      else if (e instanceof NetworkError) { setError(t.errors.network); trackEvent("ocr_error", { reason: "network" }); }
+      else { setError(t.errors.ocrFail); trackEvent("ocr_error", { reason: "unknown" }); }
     } finally {
       done();
       setExtracting(false);
@@ -104,38 +158,11 @@ function SmartExportsApp() {
     }
   };
 
-  const runCheck = async () => {
-    if (!product.trim() || !crop) return;
-    setError(null);
-    setSlow(false);
-    setStep("loading");
-    const { signal, done } = newSignal();
-    try {
-      const r = await checkFertilizer(
-        { fertilizer_name: product.trim(), crop_name: crop },
-        { signal, onSlow: () => setSlow(true) },
-      );
-      if (signal.aborted) return;
-      setResult(r);
-      setStep("result");
-    } catch (e) {
-      if (signal.aborted) return;
-      if (e instanceof ApiError && e.status === 404) {
-        setStep("escalate");
-        return;
-      }
-      if (e instanceof ApiError) setError(e.detail);
-      else if (e instanceof NetworkError) setError(t.errors.network);
-      else setError(t.errors.generic);
-      setStep("confirm");
-    } finally {
-      done();
-      setSlow(false);
-    }
-  };
+  const runCheck = () => runCheckWith(product, crop);
 
   const submitEscalate = async (contact: string, notes: string) => {
     const { signal, done } = newSignal();
+    trackEvent("escalate_submit", { crop });
     try {
       const r = await escalate(
         {
@@ -147,6 +174,7 @@ function SmartExportsApp() {
         { signal },
       );
       setEscalated({ ticket: r.ticket });
+      trackEvent("escalate_done", { ok: true });
     } finally {
       done();
     }
@@ -159,7 +187,7 @@ function SmartExportsApp() {
         <TopBar onReset={step !== "intro" ? reset : undefined} />
 
         <main className="flex-1">
-          {step === "intro" && <Intro onStart={() => setStep("capture")} />}
+          {step === "intro" && <Intro onStart={() => setStep("capture")} onPick={reCheckFromHistory} />}
           {step === "capture" && (
             <Capture onPhoto={onPhoto} onBack={() => { abortAll(); setStep("intro"); }} />
           )}
@@ -221,7 +249,7 @@ function TopBar({ onReset }: { onReset?: () => void }) {
       </button>
       <div className="flex items-center gap-4">
         <button
-          onClick={() => setLang(next)}
+          onClick={() => { trackEvent("lang_switch", { lang: next }); setLang(next); }}
           className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground transition hover:text-foreground"
           aria-label={`Switch language to ${t.topbar.switchTo}`}
         >
@@ -252,8 +280,11 @@ function Footer() {
 
 /* ---------- 01 · Intro ---------- */
 
-function Intro({ onStart }: { onStart: () => void }) {
+function Intro({ onStart, onPick }: { onStart: () => void; onPick: (e: HistoryEntry) => void }) {
   const { t } = useI18n();
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  useEffect(() => { setHistory(getHistory()); }, []);
+
   return (
     <section className="animate-fade-up pt-10">
       <StepLabel index="01" label={t.intro.kicker} />
@@ -285,8 +316,53 @@ function Intro({ onStart }: { onStart: () => void }) {
           {t.intro.note}
         </p>
       </div>
+
+      {history.length > 0 && (
+        <div className="mt-12">
+          <div className="hairline mb-4" />
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              {t.history.title}
+            </p>
+            <button
+              onClick={() => { clearHistory(); setHistory([]); }}
+              className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
+            >
+              {t.history.clear}
+            </button>
+          </div>
+          <ul className="mt-3 divide-y divide-border">
+            {history.map((h) => (
+              <li key={`${h.product}-${h.crop}-${h.ts}`}>
+                <button
+                  onClick={() => onPick(h)}
+                  className="flex w-full items-center justify-between gap-3 py-3 text-left"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-display text-[18px] leading-tight tracking-tight">
+                      {h.product}
+                    </span>
+                    <span className="block text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                      {h.crop} · {t.history.ago(timeAgo(h.ts))}
+                    </span>
+                  </span>
+                  <RiskDot risk={h.risk} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
+}
+
+function RiskDot({ risk }: { risk: RiskLevel }) {
+  const cls =
+    risk === "Safe" ? "bg-[color:var(--safe)]" :
+    risk === "Risky" ? "bg-[color:var(--risky)]" :
+    "bg-[color:var(--unclear)]";
+  return <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} aria-label={risk} />;
 }
 
 function Bullet({ n, title, body }: { n: string; title: string; body: string }) {
@@ -305,49 +381,144 @@ function Bullet({ n, title, body }: { n: string; title: string; body: string }) 
 
 function Capture({ onPhoto, onBack }: { onPhoto: (f: File) => void; onBack: () => void }) {
   const { t } = useI18n();
-  const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [session, setSession] = useState<CameraSession | null>(null);
+  const [torch, setTorchState] = useState(false);
+  const [denied, setDenied] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const startCamera = useCallback(async () => {
+    trackEvent("capture_open_camera");
+    try {
+      const s = await openRearCamera();
+      setSession(s);
+      setDenied(false);
+      if (videoRef.current) {
+        videoRef.current.srcObject = s.stream;
+        await videoRef.current.play().catch(() => {});
+      }
+    } catch {
+      setDenied(true);
+    }
+  }, []);
+
+  useEffect(() => () => { session?.stop(); }, [session]);
+
+  // Attach the stream if the <video> mounts after the session is ready.
+  useEffect(() => {
+    if (session && videoRef.current && !videoRef.current.srcObject) {
+      videoRef.current.srcObject = session.stream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [session]);
+
+  const toggleTorch = async () => {
+    if (!session) return;
+    const next = !torch;
+    const ok = await session.setTorch(next);
+    if (ok) {
+      setTorchState(next);
+      trackEvent("capture_torch_toggle", { ok: next });
+    }
+  };
+
+  const shoot = async () => {
+    if (!videoRef.current || busy) return;
+    setBusy(true);
+    try {
+      const file = await captureFrame(videoRef.current);
+      session?.stop();
+      setSession(null);
+      onPhoto(file);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeCamera = () => {
+    session?.stop();
+    setSession(null);
+    setTorchState(false);
+  };
+
   return (
     <section className="animate-fade-up pt-10">
       <StepLabel index="02" label={t.capture.kicker} />
       <h2 className="mt-6 font-display text-[34px] leading-[1] tracking-tight">{t.capture.h2}</h2>
       <p className="mt-4 max-w-[34ch] text-[14px] text-muted-foreground">{t.capture.lede}</p>
 
-      <div className="mt-8 aspect-[4/5] w-full rounded-md border border-dashed border-border bg-card/40 p-3">
-        <div className="flex h-full w-full items-center justify-center rounded-sm border border-border/60 bg-paper">
-          <div className="text-center">
-            <CameraIcon className="mx-auto h-10 w-10 text-muted-foreground" />
-            <p className="mt-3 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              {t.capture.frameHint}
-            </p>
-          </div>
+      <div className="relative mt-8 aspect-[4/5] w-full overflow-hidden rounded-md border border-dashed border-border bg-card/40 p-3">
+        <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-sm border border-border/60 bg-paper">
+          {session ? (
+            <>
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+              {/* Framing guide */}
+              <div className="pointer-events-none absolute inset-6 rounded-sm border border-white/70 mix-blend-difference" />
+              {session.hasTorch && (
+                <button
+                  onClick={toggleTorch}
+                  className="absolute right-3 top-3 rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur"
+                >
+                  {torch ? t.capture.torchOn : t.capture.torchOff}
+                </button>
+              )}
+              <button
+                onClick={closeCamera}
+                className="absolute left-3 top-3 rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur"
+              >
+                {t.capture.close}
+              </button>
+            </>
+          ) : (
+            <div className="text-center">
+              <CameraIcon className="mx-auto h-10 w-10 text-muted-foreground" />
+              <p className="mt-3 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                {t.capture.frameHint}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
       <input
-        ref={cameraRef}
+        ref={fileRef}
         type="file"
         accept="image/*"
         capture="environment"
         className="hidden"
-        onChange={(e) => e.target.files?.[0] && onPhoto(e.target.files[0])}
-      />
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => e.target.files?.[0] && onPhoto(e.target.files[0])}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) { trackEvent("capture_upload_file"); onPhoto(f); }
+        }}
       />
 
+      {denied && (
+        <p className="mt-4 rounded-sm border border-border bg-card px-3 py-2 text-[12px] text-muted-foreground">
+          {t.capture.cameraDenied}
+        </p>
+      )}
+
       <div className="mt-10">
-        <PrimaryButton onClick={() => cameraRef.current?.click()}>
-          <CameraIcon className="mr-2 h-4 w-4" />
-          {t.capture.openCamera}
-        </PrimaryButton>
+        {session ? (
+          <PrimaryButton onClick={shoot} disabled={busy}>
+            <CameraIcon className="mr-2 h-4 w-4" />
+            {t.capture.shoot}
+          </PrimaryButton>
+        ) : (
+          <PrimaryButton onClick={startCamera}>
+            <CameraIcon className="mr-2 h-4 w-4" />
+            {t.capture.openCamera}
+          </PrimaryButton>
+        )}
         <div className="mt-3 flex items-center justify-between">
           <button
-            onClick={onBack}
+            onClick={() => { closeCamera(); onBack(); }}
             className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground hover:text-foreground"
           >
             {t.capture.back}
@@ -363,6 +534,25 @@ function Capture({ onPhoto, onBack }: { onPhoto: (f: File) => void; onBack: () =
     </section>
   );
 }
+
+function timeAgo(ts: number): string {
+  const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+}
+
+function normalizeRisk(r: unknown): RiskLevel {
+  const s = String(r ?? "").toLowerCase();
+  if (s === "safe") return "Safe";
+  if (s === "risky") return "Risky";
+  return "Unclear";
+}
+
 
 /* ---------- 03 · Confirm ---------- */
 
@@ -587,6 +777,7 @@ function Result({
           href={shareUrl}
           target="_blank"
           rel="noreferrer noopener"
+          onClick={() => trackEvent("share_whatsapp", { risk: normalized })}
           className="inline-flex h-12 w-full items-center justify-center rounded-sm border border-foreground/15 bg-card text-[13px] font-medium tracking-tight text-foreground transition hover:border-foreground/40"
         >
           <WhatsAppIcon className="mr-2 h-4 w-4" />
