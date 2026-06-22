@@ -76,20 +76,30 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
+      { name: "theme-color", content: "#f4f0e6" },
+      { title: "SmartExports — Is your fertilizer EU-safe?" },
+      {
+        name: "description",
+        content:
+          "Snap a fertilizer label. SmartExports tells Kenyan farmers in seconds whether it's Safe, Risky, or Unclear for export crops — grounded in EU regulations and real rejection cases.",
+      },
+      { property: "og:title", content: "SmartExports — Is your fertilizer EU-safe?" },
+      {
+        property: "og:description",
+        content:
+          "Snap a fertilizer label. Get a Safe, Risky, or Unclear verdict grounded in EU rules and real rejection cases.",
+      },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
-        href: appCss,
+        href: "https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap",
       },
     ],
   }),
