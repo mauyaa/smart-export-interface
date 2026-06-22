@@ -19,9 +19,10 @@ export interface ResultCard {
 }
 
 export interface ExtractLabelResponse {
-  product_name: string;
-  raw_text?: string;
-  confidence?: string;
+  product_name: string | null;
+  possible_ingredients?: string[];
+  confidence: string;
+  raw_model_output: string;
 }
 
 export class ApiError extends Error {

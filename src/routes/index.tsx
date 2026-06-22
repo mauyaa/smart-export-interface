@@ -56,8 +56,11 @@ function SmartExportsApp() {
     setStep("confirm");
     setExtracting(true);
     try {
-      const { product_name } = await extractLabel(file);
-      setProduct(product_name);
+      const r = await extractLabel(file);
+      setProduct(r.product_name ?? "");
+      if (!r.product_name) {
+        setError("We couldn't read the product name. Type it from the label.");
+      }
     } catch (e) {
       const msg = e instanceof ApiError ? e.detail : "Could not read the label. Type the product name below.";
       setError(msg);
