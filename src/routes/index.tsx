@@ -183,7 +183,8 @@ function SmartExportsApp() {
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-background text-foreground">
       <div className="paper-grain pointer-events-none absolute inset-0 opacity-60" />
-      <div className="relative mx-auto flex min-h-[100dvh] w-full max-w-[440px] flex-col px-6 pb-10 pt-6">
+      <AmbientPanel />
+      <div className="relative mx-auto flex min-h-[100dvh] w-full max-w-[440px] flex-col px-6 pb-10 pt-6 lg:mx-0 lg:ml-[max(3rem,calc(50vw-30rem))]">
         <TopBar onReset={step !== "intro" ? reset : undefined} />
 
         <main className="flex-1">
