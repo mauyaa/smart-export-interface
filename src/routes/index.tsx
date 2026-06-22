@@ -368,13 +368,13 @@ function Capture({ onPhoto, onBack }: { onPhoto: (f: File) => void; onBack: () =
 
 function Confirm({
   photo, product, setProduct, ingredients, crop, setCrop,
-  extracting, error, onSubmit, onRetake,
+  extracting, slow, error, onSubmit, onRetake,
 }: {
   photo: { file: File; url: string };
   product: string; setProduct: (s: string) => void;
   ingredients: string[];
   crop: string; setCrop: (s: string) => void;
-  extracting: boolean; error: string | null;
+  extracting: boolean; slow: boolean; error: string | null;
   onSubmit: () => void; onRetake: () => void;
 }) {
   const { t } = useI18n();
@@ -409,7 +409,11 @@ function Confirm({
               <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-primary" /> {t.confirm.reading}
             </p>
           )}
+          {extracting && slow && (
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{t.loading.waking}</p>
+          )}
         </Field>
+
 
         {ingredients.length > 0 && (
           <Field label={t.confirm.alsoSeen}>
