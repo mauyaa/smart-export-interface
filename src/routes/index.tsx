@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   COMMON_CROPS,
+  NetworkError,
   checkFertilizer,
   escalate,
   extractLabel,
@@ -10,6 +11,7 @@ import {
   type ResultCard,
   type RiskLevel,
 } from "@/lib/api";
+import { compressImage } from "@/lib/image";
 import { useI18n, type Lang } from "@/lib/i18n";
 
 export const Route = createFileRoute("/")({
@@ -38,11 +40,29 @@ function SmartExportsApp() {
   const [crop, setCrop] = useState<string>("");
   const [result, setResult] = useState<ResultCard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [escalated, setEscalated] = useState(false);
+  const [escalated, setEscalated] = useState<{ ticket: string } | null>(null);
+  const [slow, setSlow] = useState(false);
+
+  // Track every in-flight request so we can cancel on back / reset / unmount.
+  const inflight = useRef<Set<AbortController>>(new Set());
+  const newSignal = useCallback(() => {
+    const c = new AbortController();
+    inflight.current.add(c);
+    return {
+      signal: c.signal,
+      done: () => inflight.current.delete(c),
+    };
+  }, []);
+  const abortAll = useCallback(() => {
+    for (const c of inflight.current) c.abort();
+    inflight.current.clear();
+  }, []);
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
+  useEffect(() => () => abortAll(), [abortAll]);
 
   const reset = () => {
+    abortAll();
     setStep("intro");
     setPhoto(null);
     setProduct("");
@@ -50,53 +70,86 @@ function SmartExportsApp() {
     setCrop("");
     setResult(null);
     setError(null);
-    setEscalated(false);
+    setEscalated(null);
+    setSlow(false);
   };
 
-  const onPhoto = async (file: File) => {
+  const onPhoto = async (raw: File) => {
     setError(null);
+    setSlow(false);
+    const file = await compressImage(raw);
     const url = URL.createObjectURL(file);
     setPhoto({ file, url });
     setStep("confirm");
     setExtracting(true);
+    const { signal, done } = newSignal();
     try {
-      const r: ExtractLabelResponse = await extractLabel(file);
+      const r: ExtractLabelResponse = await extractLabel(file, {
+        signal,
+        onSlow: () => setSlow(true),
+      });
+      if (signal.aborted) return;
       setProduct(r.product_name ?? "");
       setIngredients((r.possible_ingredients ?? []).filter((s): s is string => typeof s === "string" && s.length > 0));
       if (!r.product_name) setError(t.errors.ocrEmpty);
     } catch (e) {
-      setError(e instanceof ApiError ? e.detail : t.errors.ocrFail);
+      if (signal.aborted) return;
+      if (e instanceof ApiError) setError(e.detail);
+      else if (e instanceof NetworkError) setError(t.errors.network);
+      else setError(t.errors.ocrFail);
     } finally {
+      done();
       setExtracting(false);
+      setSlow(false);
     }
   };
 
   const runCheck = async () => {
     if (!product.trim() || !crop) return;
     setError(null);
+    setSlow(false);
     setStep("loading");
+    const { signal, done } = newSignal();
     try {
-      const r = await checkFertilizer({ fertilizer_name: product.trim(), crop_name: crop });
+      const r = await checkFertilizer(
+        { fertilizer_name: product.trim(), crop_name: crop },
+        { signal, onSlow: () => setSlow(true) },
+      );
+      if (signal.aborted) return;
       setResult(r);
       setStep("result");
     } catch (e) {
+      if (signal.aborted) return;
       if (e instanceof ApiError && e.status === 404) {
         setStep("escalate");
         return;
       }
-      setError(e instanceof ApiError ? e.detail : t.errors.generic);
+      if (e instanceof ApiError) setError(e.detail);
+      else if (e instanceof NetworkError) setError(t.errors.network);
+      else setError(t.errors.generic);
       setStep("confirm");
+    } finally {
+      done();
+      setSlow(false);
     }
   };
 
   const submitEscalate = async (contact: string, notes: string) => {
-    await escalate({
-      fertilizer_name: product.trim(),
-      crop_name: crop,
-      farmer_contact: contact || undefined,
-      notes: notes || undefined,
-    });
-    setEscalated(true);
+    const { signal, done } = newSignal();
+    try {
+      const r = await escalate(
+        {
+          fertilizer_name: product.trim(),
+          crop_name: crop,
+          farmer_contact: contact || undefined,
+          notes: notes || undefined,
+        },
+        { signal },
+      );
+      setEscalated({ ticket: r.ticket });
+    } finally {
+      done();
+    }
   };
 
   return (
@@ -108,7 +161,7 @@ function SmartExportsApp() {
         <main className="flex-1">
           {step === "intro" && <Intro onStart={() => setStep("capture")} />}
           {step === "capture" && (
-            <Capture onPhoto={onPhoto} onBack={() => setStep("intro")} />
+            <Capture onPhoto={onPhoto} onBack={() => { abortAll(); setStep("intro"); }} />
           )}
           {step === "confirm" && photo && (
             <Confirm
@@ -119,12 +172,20 @@ function SmartExportsApp() {
               crop={crop}
               setCrop={setCrop}
               extracting={extracting}
+              slow={slow}
               error={error}
               onSubmit={runCheck}
-              onRetake={() => { setPhoto(null); setProduct(""); setIngredients([]); setStep("capture"); }}
+              onRetake={() => { abortAll(); setPhoto(null); setProduct(""); setIngredients([]); setStep("capture"); }}
             />
           )}
-          {step === "loading" && <Loading product={product} crop={crop} />}
+          {step === "loading" && (
+            <Loading
+              product={product}
+              crop={crop}
+              slow={slow}
+              onCancel={() => { abortAll(); setStep("confirm"); }}
+            />
+          )}
           {step === "result" && result && (
             <Result result={result} onAgain={reset} onEscalate={() => setStep("escalate")} />
           )}
@@ -307,13 +368,13 @@ function Capture({ onPhoto, onBack }: { onPhoto: (f: File) => void; onBack: () =
 
 function Confirm({
   photo, product, setProduct, ingredients, crop, setCrop,
-  extracting, error, onSubmit, onRetake,
+  extracting, slow, error, onSubmit, onRetake,
 }: {
   photo: { file: File; url: string };
   product: string; setProduct: (s: string) => void;
   ingredients: string[];
   crop: string; setCrop: (s: string) => void;
-  extracting: boolean; error: string | null;
+  extracting: boolean; slow: boolean; error: string | null;
   onSubmit: () => void; onRetake: () => void;
 }) {
   const { t } = useI18n();
@@ -348,7 +409,11 @@ function Confirm({
               <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-primary" /> {t.confirm.reading}
             </p>
           )}
+          {extracting && slow && (
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{t.loading.waking}</p>
+          )}
         </Field>
+
 
         {ingredients.length > 0 && (
           <Field label={t.confirm.alsoSeen}>
@@ -414,7 +479,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 /* ---------- Loading ---------- */
 
-function Loading({ product, crop }: { product: string; crop: string }) {
+function Loading({
+  product, crop, slow, onCancel,
+}: { product: string; crop: string; slow: boolean; onCancel: () => void }) {
   const { t } = useI18n();
   const steps = useMemo(() => t.loading.steps, [t]);
   const [i, setI] = useState(0);
@@ -436,9 +503,21 @@ function Loading({ product, crop }: { product: string; crop: string }) {
           </li>
         ))}
       </ul>
+      {slow && (
+        <p className="mt-6 max-w-[30ch] text-[12px] leading-relaxed text-muted-foreground">
+          {t.loading.waking}
+        </p>
+      )}
+      <button
+        onClick={onCancel}
+        className="mt-10 text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
+      >
+        {t.escalate.cancel}
+      </button>
     </section>
   );
 }
+
 
 /* ---------- Result ---------- */
 
@@ -539,7 +618,7 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
 function Escalate({
   product, crop, done, onSubmit, onDone,
 }: {
-  product: string; crop: string; done: boolean;
+  product: string; crop: string; done: { ticket: string } | null;
   onSubmit: (contact: string, notes: string) => Promise<void>;
   onDone: () => void;
 }) {
@@ -548,13 +627,27 @@ function Escalate({
   const [notes, setNotes] = useState("");
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const submit = useCallback(async () => {
     setSending(true); setErr(null);
     try { await onSubmit(contact, notes); }
-    catch (e) { setErr(e instanceof ApiError ? e.detail : t.errors.sendFail); }
+    catch (e) {
+      if (e instanceof ApiError) setErr(e.detail);
+      else if (e instanceof NetworkError) setErr(t.errors.network);
+      else setErr(t.errors.sendFail);
+    }
     finally { setSending(false); }
   }, [contact, notes, onSubmit, t]);
+
+  const copyTicket = async () => {
+    if (!done) return;
+    try {
+      await navigator.clipboard.writeText(done.ticket);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch { /* ignore */ }
+  };
 
   if (done) {
     return (
@@ -564,10 +657,28 @@ function Escalate({
         <p className="mx-auto mt-3 max-w-[30ch] text-[14px] text-muted-foreground">
           {t.escalate.doneBody(product, crop)}
         </p>
+
+        <div className="mx-auto mt-8 max-w-[18rem] rounded-md border border-border bg-card px-5 py-4 text-left">
+          <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+            {t.escalate.ticketLabel}
+          </p>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className="font-display text-[22px] tracking-tight">{done.ticket}</span>
+            <button
+              onClick={copyTicket}
+              className="rounded-sm border border-border px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground transition hover:border-foreground hover:text-foreground"
+            >
+              {copied ? t.escalate.copied : t.escalate.copy}
+            </button>
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t.escalate.ticketHint}</p>
+        </div>
+
         <div className="mt-10"><PrimaryButton onClick={onDone}>{t.escalate.done}</PrimaryButton></div>
       </section>
     );
   }
+
 
   return (
     <section className="animate-fade-up pt-8">
