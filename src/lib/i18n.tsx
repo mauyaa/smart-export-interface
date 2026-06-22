@@ -26,7 +26,7 @@ type Dict = {
     productLabel: string; productPlaceholder: string; reading: string;
     cropLabel: string; alsoSeen: string; cta: string;
   };
-  loading: { title: (p: string, c: string) => string; steps: string[] };
+  loading: { title: (p: string, c: string) => string; steps: string[]; waking: string };
   result: {
     kicker: string;
     verdict: { Safe: string; Risky: string; Unclear: string };
@@ -43,9 +43,11 @@ type Dict = {
     notesLabel: string; notesPh: string;
     cta: string; sending: string; cancel: string;
     doneTitle: string; doneBody: (p: string, c: string) => string; done: string;
+    ticketLabel: string; ticketHint: string; copy: string; copied: string;
   };
-  errors: { ocrEmpty: string; ocrFail: string; generic: string; sendFail: string };
+  errors: { ocrEmpty: string; ocrFail: string; generic: string; sendFail: string; network: string };
 };
+
 
 const en: Dict = {
   topbar: { startOver: "Start over", switchTo: "Swahili" },
@@ -90,6 +92,7 @@ const en: Dict = {
       "Searching rejection cases",
       "Composing verdict",
     ],
+    waking: "Server is waking up — first check of the day takes a bit longer.",
   },
   result: {
     kicker: "Verdict",
@@ -104,7 +107,7 @@ const en: Dict = {
     flag: "Flag this verdict for expert review",
     share: "Share on WhatsApp",
     shareText: (p, c, v, e) =>
-      `SmartExports verdict — ${p} on ${c}: ${v.toUpperCase()}.\n\n${e}\n\nChecked with SmartExports.`,
+      `SmartExports verdict — ${p} on ${c}: ${v.toUpperCase()}.\n\n${e}\n\nCheck your own at smartexports.app`,
   },
   escalate: {
     kicker: "Not in dataset",
@@ -122,14 +125,20 @@ const en: Dict = {
     doneBody: (p, c) =>
       `Our team will look into ${p} for ${c} and follow up if you left contact details.`,
     done: "Done",
+    ticketLabel: "Your reference",
+    ticketHint: "Save this. Quote it if you contact us about this product.",
+    copy: "Copy",
+    copied: "Copied",
   },
   errors: {
     ocrEmpty: "We couldn't read the product name. Type it from the label.",
     ocrFail: "Could not read the label. Type the product name below.",
     generic: "Something went wrong. Please retry.",
     sendFail: "Could not send. Please retry.",
+    network: "Could not reach the server. Check your connection and try again.",
   },
 };
+
 
 const sw: Dict = {
   topbar: { startOver: "Anza upya", switchTo: "English" },
