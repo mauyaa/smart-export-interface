@@ -185,6 +185,7 @@ const sw: Dict = {
       "Inatafuta kesi za kukataliwa",
       "Inaandaa jibu",
     ],
+    waking: "Seva inaamka — ukaguzi wa kwanza wa siku huchukua muda kidogo.",
   },
   result: {
     kicker: "Jibu",
@@ -199,7 +200,7 @@ const sw: Dict = {
     flag: "Tuma jibu hili kwa mtaalamu",
     share: "Shiriki kwenye WhatsApp",
     shareText: (p, c, v, e) =>
-      `Jibu la SmartExports — ${p} kwa ${c}: ${v.toUpperCase()}.\n\n${e}\n\nImekaguliwa na SmartExports.`,
+      `Jibu la SmartExports — ${p} kwa ${c}: ${v.toUpperCase()}.\n\n${e}\n\nJikague mwenyewe smartexports.app`,
   },
   escalate: {
     kicker: "Haipo kwenye data",
@@ -216,13 +217,19 @@ const sw: Dict = {
     doneTitle: "Imetumwa kwa ukaguzi.",
     doneBody: (p, c) => `Timu yetu itaichunguza ${p} kwa ${c} na kukufuatilia ukiacha mawasiliano.`,
     done: "Imekamilika",
+    ticketLabel: "Kumbukumbu yako",
+    ticketHint: "Hifadhi hii. Itaje ukiwasiliana nasi kuhusu bidhaa hii.",
+    copy: "Nakili",
+    copied: "Imenakiliwa",
   },
   errors: {
     ocrEmpty: "Hatukuweza kusoma jina la bidhaa. Liandike kutoka kwenye lebo.",
     ocrFail: "Hatukuweza kusoma lebo. Andika jina la bidhaa hapa chini.",
     generic: "Kuna hitilafu. Tafadhali jaribu tena.",
     sendFail: "Haikuweza kutuma. Tafadhali jaribu tena.",
+    network: "Hatuwezi kufikia seva. Angalia muunganisho wako na ujaribu tena.",
   },
+
 };
 
 const DICTS: Record<Lang, Dict> = { en, sw };
