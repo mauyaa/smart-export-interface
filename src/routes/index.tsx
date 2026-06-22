@@ -144,12 +144,13 @@ function SmartExportsApp() {
       if (signal.aborted) return;
       setProduct(r.product_name ?? "");
       setIngredients((r.possible_ingredients ?? []).filter((s): s is string => typeof s === "string" && s.length > 0));
-      if (!r.product_name) setError(t.errors.ocrEmpty);
+      if (!r.product_name) { setError(t.errors.ocrEmpty); trackEvent("ocr_empty"); }
+      else trackEvent("ocr_success");
     } catch (e) {
       if (signal.aborted) return;
-      if (e instanceof ApiError) setError(e.detail);
-      else if (e instanceof NetworkError) setError(t.errors.network);
-      else setError(t.errors.ocrFail);
+      if (e instanceof ApiError) { setError(e.detail); trackEvent("ocr_error", { status: e.status }); }
+      else if (e instanceof NetworkError) { setError(t.errors.network); trackEvent("ocr_error", { reason: "network" }); }
+      else { setError(t.errors.ocrFail); trackEvent("ocr_error", { reason: "unknown" }); }
     } finally {
       done();
       setExtracting(false);
@@ -248,7 +249,7 @@ function TopBar({ onReset }: { onReset?: () => void }) {
       </button>
       <div className="flex items-center gap-4">
         <button
-          onClick={() => setLang(next)}
+          onClick={() => { trackEvent("lang_switch", { lang: next }); setLang(next); }}
           className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground transition hover:text-foreground"
           aria-label={`Switch language to ${t.topbar.switchTo}`}
         >
