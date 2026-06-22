@@ -618,7 +618,7 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
 function Escalate({
   product, crop, done, onSubmit, onDone,
 }: {
-  product: string; crop: string; done: boolean;
+  product: string; crop: string; done: { ticket: string } | null;
   onSubmit: (contact: string, notes: string) => Promise<void>;
   onDone: () => void;
 }) {
@@ -627,13 +627,27 @@ function Escalate({
   const [notes, setNotes] = useState("");
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const submit = useCallback(async () => {
     setSending(true); setErr(null);
     try { await onSubmit(contact, notes); }
-    catch (e) { setErr(e instanceof ApiError ? e.detail : t.errors.sendFail); }
+    catch (e) {
+      if (e instanceof ApiError) setErr(e.detail);
+      else if (e instanceof NetworkError) setErr(t.errors.network);
+      else setErr(t.errors.sendFail);
+    }
     finally { setSending(false); }
   }, [contact, notes, onSubmit, t]);
+
+  const copyTicket = async () => {
+    if (!done) return;
+    try {
+      await navigator.clipboard.writeText(done.ticket);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch { /* ignore */ }
+  };
 
   if (done) {
     return (
@@ -643,10 +657,28 @@ function Escalate({
         <p className="mx-auto mt-3 max-w-[30ch] text-[14px] text-muted-foreground">
           {t.escalate.doneBody(product, crop)}
         </p>
+
+        <div className="mx-auto mt-8 max-w-[18rem] rounded-md border border-border bg-card px-5 py-4 text-left">
+          <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+            {t.escalate.ticketLabel}
+          </p>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className="font-display text-[22px] tracking-tight">{done.ticket}</span>
+            <button
+              onClick={copyTicket}
+              className="rounded-sm border border-border px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground transition hover:border-foreground hover:text-foreground"
+            >
+              {copied ? t.escalate.copied : t.escalate.copy}
+            </button>
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t.escalate.ticketHint}</p>
+        </div>
+
         <div className="mt-10"><PrimaryButton onClick={onDone}>{t.escalate.done}</PrimaryButton></div>
       </section>
     );
   }
+
 
   return (
     <section className="animate-fade-up pt-8">
