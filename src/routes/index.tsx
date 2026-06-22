@@ -16,6 +16,8 @@ import { useI18n, type Lang } from "@/lib/i18n";
 import { getHistory, recordCheck, clearHistory, type HistoryEntry } from "@/lib/history";
 import { trackEvent } from "@/lib/telemetry";
 import { openRearCamera, captureFrame, type CameraSession } from "@/lib/camera";
+import ambientLeaves from "@/assets/ambient-leaves.jpg.asset.json";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
