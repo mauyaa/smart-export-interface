@@ -63,6 +63,7 @@ function SmartExportsApp() {
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
   useEffect(() => () => abortAll(), [abortAll]);
+  useEffect(() => { trackEvent("app_open"); }, []);
 
   const reset = () => {
     abortAll();
@@ -75,6 +76,55 @@ function SmartExportsApp() {
     setError(null);
     setEscalated(null);
     setSlow(false);
+  };
+
+  // Re-check a product from history with one tap.
+  const reCheckFromHistory = (entry: HistoryEntry) => {
+    trackEvent("history_open", { crop: entry.crop });
+    setProduct(entry.product);
+    setCrop(entry.crop);
+    setPhoto(null);
+    setIngredients([]);
+    setResult(null);
+    setError(null);
+    setEscalated(null);
+    setSlow(false);
+    // Skip capture/confirm — go straight to the check.
+    void runCheckWith(entry.product, entry.crop);
+  };
+
+  const runCheckWith = async (p: string, c: string) => {
+    if (!p.trim() || !c) return;
+    setError(null);
+    setSlow(false);
+    setStep("loading");
+    trackEvent("check_submit", { crop: c });
+    const { signal, done } = newSignal();
+    try {
+      const r = await checkFertilizer(
+        { fertilizer_name: p.trim(), crop_name: c },
+        { signal, onSlow: () => setSlow(true) },
+      );
+      if (signal.aborted) return;
+      setResult(r);
+      setStep("result");
+      recordCheck({ product: r.fertilizer, crop: r.crop, risk: normalizeRisk(r.risk_level) });
+      trackEvent("check_result", { crop: r.crop, risk: r.risk_level, matched_via: r.matched_via });
+    } catch (e) {
+      if (signal.aborted) return;
+      if (e instanceof ApiError && e.status === 404) {
+        trackEvent("check_not_found", { crop: c });
+        setStep("escalate");
+        return;
+      }
+      if (e instanceof ApiError) { setError(e.detail); trackEvent("check_error", { status: e.status }); }
+      else if (e instanceof NetworkError) { setError(t.errors.network); trackEvent("check_error", { reason: "network" }); }
+      else { setError(t.errors.generic); trackEvent("check_error", { reason: "unknown" }); }
+      setStep("confirm");
+    } finally {
+      done();
+      setSlow(false);
+    }
   };
 
   const onPhoto = async (raw: File) => {
