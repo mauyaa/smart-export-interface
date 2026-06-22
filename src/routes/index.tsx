@@ -479,7 +479,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 /* ---------- Loading ---------- */
 
-function Loading({ product, crop }: { product: string; crop: string }) {
+function Loading({
+  product, crop, slow, onCancel,
+}: { product: string; crop: string; slow: boolean; onCancel: () => void }) {
   const { t } = useI18n();
   const steps = useMemo(() => t.loading.steps, [t]);
   const [i, setI] = useState(0);
@@ -501,9 +503,21 @@ function Loading({ product, crop }: { product: string; crop: string }) {
           </li>
         ))}
       </ul>
+      {slow && (
+        <p className="mt-6 max-w-[30ch] text-[12px] leading-relaxed text-muted-foreground">
+          {t.loading.waking}
+        </p>
+      )}
+      <button
+        onClick={onCancel}
+        className="mt-10 text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
+      >
+        {t.escalate.cancel}
+      </button>
     </section>
   );
 }
+
 
 /* ---------- Result ---------- */
 
