@@ -157,38 +157,11 @@ function SmartExportsApp() {
     }
   };
 
-  const runCheck = async () => {
-    if (!product.trim() || !crop) return;
-    setError(null);
-    setSlow(false);
-    setStep("loading");
-    const { signal, done } = newSignal();
-    try {
-      const r = await checkFertilizer(
-        { fertilizer_name: product.trim(), crop_name: crop },
-        { signal, onSlow: () => setSlow(true) },
-      );
-      if (signal.aborted) return;
-      setResult(r);
-      setStep("result");
-    } catch (e) {
-      if (signal.aborted) return;
-      if (e instanceof ApiError && e.status === 404) {
-        setStep("escalate");
-        return;
-      }
-      if (e instanceof ApiError) setError(e.detail);
-      else if (e instanceof NetworkError) setError(t.errors.network);
-      else setError(t.errors.generic);
-      setStep("confirm");
-    } finally {
-      done();
-      setSlow(false);
-    }
-  };
+  const runCheck = () => runCheckWith(product, crop);
 
   const submitEscalate = async (contact: string, notes: string) => {
     const { signal, done } = newSignal();
+    trackEvent("escalate_submit", { crop });
     try {
       const r = await escalate(
         {
@@ -200,6 +173,7 @@ function SmartExportsApp() {
         { signal },
       );
       setEscalated({ ticket: r.ticket });
+      trackEvent("escalate_done", { ok: true });
     } finally {
       done();
     }
