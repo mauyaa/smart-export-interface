@@ -1,0 +1,242 @@
+# SmartExports — Frontend ↔ Backend Integration Guide
+
+This is the operational handbook for the SmartExports frontend. It explains exactly how the UI joins the FastAPI service, which contract each screen depends on, and the design intent behind every visible element so anyone on the team can change it without breaking the system.
+
+---
+
+## 1. Architecture at a glance
+
+```
+┌──────────────────────────────┐                     ┌─────────────────────────────┐
+│  SmartExports Frontend       │   HTTPS / JSON      │  smartexports-api.onrender  │
+│  TanStack Start · React 19   │ ──────────────────▶ │  FastAPI · Python           │
+│  Tailwind v4 · Inter+Serif   │ ◀────────────────── │  Rate-limited (30/min)      │
+│  PWA-installable             │                     │  CORS-restricted            │
+└──────────────────────────────┘                     └───────────────┬─────────────┘
+                                                                     │
+                                            ┌────────────────────────┴────────────────────────┐
+                                            │ Neo4j AuraDB (GraphRAG: substances, rules,      │
+                                            │ rejections) + Featherless LLMs (Qwen3-VL OCR,   │
+                                            │ Llama 3.1 grounded explanation).                │
+                                            └─────────────────────────────────────────────────┘
+```
+
+Single source of truth for the API base URL:
+
+```ts
+// src/lib/api.ts
+export const API_BASE =
+  import.meta.env.VITE_SMARTEXPORTS_API ?? "https://smartexports-api.onrender.com";
+```
+
+Override locally by exporting `VITE_SMARTEXPORTS_API=http://localhost:8000` before `bun dev`.
+
+---
+
+## 2. Endpoint map — exactly what the UI calls
+
+All requests live in `src/lib/api.ts`. Each is typed against the live OpenAPI schema and throws a typed `ApiError(status, detail)` on non-2xx.
+
+| Screen      | Function           | Method · Path           | Request                                                | Response             |
+| ----------- | ------------------ | ----------------------- | ------------------------------------------------------ | -------------------- |
+| Capture     | `extractLabel(f)`  | `POST /extract-label`   | `multipart/form-data { file: image }`                  | `ExtractLabelResponse` |
+| Confirm/Run | `checkFertilizer`  | `POST /check`           | `{ fertilizer_name, crop_name }`                       | `ResultCard`         |
+| Escalate    | `escalate(payload)`| `POST /escalate`        | `{ fertilizer_name, crop_name, farmer_contact?, notes? }` | `{ ok: true }`     |
+| (boot)      | `checkHealth()`    | `GET /health`           | —                                                      | `boolean`            |
+
+### Response shapes used by the UI
+
+```ts
+type RiskLevel = "Safe" | "Risky" | "Unclear";
+
+interface ResultCard {
+  fertilizer: string;
+  crop: string;
+  risk_level: RiskLevel;
+  explanation: string;        // LLM-grounded plain-language paragraph
+  next_step: string;          // server-mapped from risk_level
+  alternative_product: string | null;  // only set when risk_level === "Risky"
+  evidence: Record<string, unknown>;   // graph path (debug/audit, not shown)
+  matched_via: "exact" | string;       // "fuzzy:<typed>" if name was corrected
+}
+
+interface ExtractLabelResponse {
+  product_name: string | null;        // can be null — UI prompts manual entry
+  possible_ingredients?: string[];    // surfaced as chips on the Confirm screen
+  confidence: string;
+  raw_model_output: string;
+}
+```
+
+### Error contract
+
+| Status | UI behavior                                                                 |
+| ------ | --------------------------------------------------------------------------- |
+| 200    | happy path                                                                   |
+| 404    | `/check` only → app auto-routes to the **Escalate** screen with the same product+crop pre-filled |
+| 429    | rate-limited; the server's `detail` is shown inline in red on the source screen |
+| 503    | DB or LLM unavailable; same inline red banner; user can retry without losing state |
+| other  | localized generic error ("Something went wrong. Please retry.")              |
+
+---
+
+## 3. UI state machine
+
+One screen at a time, mobile-first (≤440px column). Transitions and the API calls that drive them:
+
+```
+        ┌──────────┐  Start  ┌──────────┐  photo    ┌──────────┐  /check 200  ┌──────────┐
+        │  intro   │ ──────▶ │ capture  │ ────────▶ │ confirm  │ ───────────▶ │  result  │
+        └──────────┘         └──────────┘  /extract │          │              └────┬─────┘
+              ▲                    │       -label   │          │  /check 404       │ flag
+              │                    │ back           │          │ ──────────┐       │
+              │ start over         └────────────────┘          │           ▼       │
+              │                                                │      ┌──────────┐ │
+              └────────────────────────────────────────────────┴────▶ │ escalate │◀┘
+                                                                      └──────────┘
+                                                                            │ /escalate 200
+                                                                            ▼
+                                                                       "Sent." → Done → intro
+```
+
+All state lives in `SmartExportsApp` in `src/routes/index.tsx`. There is no global store — every transition is a single `setStep()` and the data needed by the next screen is already in component state.
+
+---
+
+## 4. Screen-by-screen intent
+
+Every screen follows the principles in the design brief: **isolation** (one focus), **one accent** (clay-orange `--primary`), **golden-ratio tension** (off-balance serif headline + grotesk body), **denoise** (no decorative chrome).
+
+### 01 · Intro
+* **Goal:** answer "what does this thing do?" in one glance.
+* **Composition:** single large serif headline with `EU-safe` italicized in the accent color (the page's one accent). Three numbered bullets (①②③) replace the usual three-card grid — fewer borders, more focus.
+* **CTA:** single black pill, no secondary CTA (deliberate).
+
+### 02 · Capture
+* **Goal:** make the camera the only thing on screen.
+* **Composition:** a 4:5 dashed frame at golden-ratio height, with `frameHint` centered. Hidden `<input type="file" accept="image/*" capture="environment">` opens the native rear camera on phones; a discreet gallery fallback lives under the primary CTA.
+
+### 03 · Confirm
+* **Goal:** verify the OCR result before spending a `/check` call.
+* **Composition:** thumbnail of the photo + an editable serif text field for `product_name`. Below it, `possible_ingredients` from the OCR appear as muted chips (no action — they are evidence, not selectors). Crop is picked from `COMMON_CROPS` chips that snap to ink-on-paper when selected. The primary CTA is disabled until both are present.
+
+### Loading
+* **Goal:** keep the user oriented during a 2–6s round trip.
+* **Composition:** a single pulsing dot (the one accent) and four sequential progress lines reflecting the actual server pipeline (resolve name → match → search rejections → compose verdict).
+
+### 04 · Verdict
+* **Goal:** make the risk level legible in 0.5s.
+* **Composition:** a color-coded card (`Safe` moss / `Risky` clay-red / `Unclear` mustard) with the verdict word set in 64px serif. The explanation (LLM, grounded on `evidence_path`) sits directly under it. Then `next_step`, optional `alternative_product`, and a `matched_via` badge (so users know if their spelling was auto-corrected).
+* **Actions:** check another · share on WhatsApp (deep link `https://wa.me/?text=...` so the verdict spreads farmer-to-farmer) · flag for expert review.
+
+### Escalate
+* **Goal:** never dead-end on a `/check` 404.
+* **Composition:** product+crop are carried over from the previous step; contact and notes are optional. Success state replaces the form with a single moss check mark and a thank-you sentence.
+
+---
+
+## 5. Design system
+
+All tokens live in `src/styles.css`. Components reference semantic Tailwind classes only (`bg-background`, `text-foreground`, `bg-primary`, `text-[color:var(--safe)]`); there are **no** hardcoded hex values in components, so dark mode and theming work for free.
+
+| Token        | Light value (oklch)      | Role                                    |
+| ------------ | ------------------------ | --------------------------------------- |
+| `--paper`    | `0.972 0.012 85`         | App background (warm off-white)         |
+| `--ink`      | `0.18 0.012 70`          | Foreground text                         |
+| `--primary`  | `0.55 0.16 38`           | The one accent — clay-orange            |
+| `--safe`     | `0.42 0.10 150`          | Safe verdict                            |
+| `--risky`    | `0.50 0.20 28`           | Risky verdict                           |
+| `--unclear`  | `0.62 0.14 70`           | Unclear verdict                         |
+
+Type pairing: **Instrument Serif** (italics carry every emphasis) + **Inter** (everything else). Loaded once in `src/routes/__root.tsx` via Google Fonts with `preconnect`. Both have a matching dark-mode triplet defined under `.dark`.
+
+Reserved utilities (`paper-grain`, `hairline`, `animate-fade-up`, `animate-pulse-ring`) live at the bottom of `styles.css` and are used sparingly — denoise discipline.
+
+---
+
+## 6. Internationalization
+
+`src/lib/i18n.tsx` exposes a typed `LanguageProvider` + `useI18n()` hook with English and Swahili dictionaries. The selected language is persisted in `localStorage` under `smartexports.lang` and auto-detected from `navigator.language` on first visit. The header toggle (`EN / SW`) switches instantly without a reload. Add a new locale by:
+
+1. Adding a fully-typed `Dict` object in `src/lib/i18n.tsx`.
+2. Adding it to `DICTS` and the `Lang` union.
+3. Adding a toggle entry in the `TopBar`.
+
+No string in the UI is hardcoded — every visible piece of copy goes through `t.*`.
+
+---
+
+## 7. PWA / Installability
+
+`public/manifest.webmanifest` + `public/app-icon.png` (512×512, maskable). Linked from `__root.tsx` along with `apple-touch-icon` and `theme-color`. This is **manifest-only** — there is no service worker, so the app does not pretend to work offline. On Android Chrome the install prompt shows automatically after engagement; on iOS Safari, "Add to Home Screen" works because the manifest and apple touch icon are present.
+
+To add true offline behavior later, follow the project's PWA skill and wire `vite-plugin-pwa` with `generateSW`. Do not hand-roll a service worker.
+
+---
+
+## 8. SEO & metadata
+
+* `__root.tsx` defines the global title, description, OG + Twitter cards, theme color, manifest link, and apple touch icon.
+* `routes/index.tsx` overrides title + description for the home route. Both are localized in spirit (English copy is the canonical entry point for search engines; the in-app toggle handles users).
+* Viewport uses `viewport-fit=cover` so the design respects the iOS notch.
+
+---
+
+## 9. Local development
+
+```bash
+# install
+bun install
+
+# run against the live API
+bun dev
+
+# run against a local FastAPI instance
+VITE_SMARTEXPORTS_API=http://localhost:8000 bun dev
+
+# build
+bun run build
+```
+
+The dev server prints `http://localhost:8080`. CORS for that origin is already in the backend's default `CORS_ORIGINS`.
+
+---
+
+## 10. Shipping to `mauyaa/smart-export`
+
+Lovable creates and syncs a **new** repository — it cannot push directly to a pre-existing repo. Flow:
+
+1. In the Lovable composer: **+ → GitHub → Connect project → Create Repository**.
+2. Lovable spins up `<your-org>/smart-export-frontend` (or whatever name you pick) and starts two-way sync — every change in Lovable is a commit on `main` of that repo, and every push to `main` re-renders the Lovable preview.
+3. To merge into `mauyaa/smart-export`, clone the new repo locally and copy the source (everything except `.git`) into a `frontend/` folder of `smart-export`, or add it as a Git submodule. Suggested copy command from the new repo's root:
+
+   ```bash
+   rsync -a --exclude='.git' --exclude='node_modules' --exclude='dist' \
+     ./ ../smart-export/frontend/
+   ```
+
+4. From then on, the FastAPI service stays in `smart-export/api` and the frontend either lives alongside it under `smart-export/frontend` (manual sync) or stays in the Lovable-synced repo (continuous sync).
+
+CI / deploy targets that work out of the box: Cloudflare Pages, Vercel, Netlify, or `bun run build` → static hosting. The build emits a fully-prerendered SSR-friendly bundle thanks to TanStack Start.
+
+---
+
+## 11. File map (what lives where)
+
+```
+src/
+├── lib/
+│   ├── api.ts              # typed client for all 4 endpoints + COMMON_CROPS list
+│   └── i18n.tsx            # LanguageProvider, dictionaries (en / sw)
+├── routes/
+│   ├── __root.tsx          # html shell, fonts, manifest, OG meta, providers
+│   └── index.tsx           # full SmartExports app: state machine + 6 screens
+├── styles.css              # design tokens (oklch), risk palette, utilities
+└── router.tsx              # TanStack Start bootstrap (untouched)
+
+public/
+├── manifest.webmanifest    # PWA manifest (display: standalone)
+└── app-icon.png            # 512×512 maskable icon
+```
+
+That's the whole frontend. Anything else you want it to do (offline queue, history of past checks, Swahili voice prompts, a map of last-mile co-op offices) hooks cleanly into the same primitives: add a screen to the state machine, a key to the dictionary, and — if it needs the backend — a typed function in `lib/api.ts`.
