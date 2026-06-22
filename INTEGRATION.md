@@ -252,7 +252,8 @@ CI / deploy targets that work out of the box: Cloudflare Pages, Vercel, Netlify,
 ```
 src/
 ├── lib/
-│   ├── api.ts              # typed client for all 4 endpoints + COMMON_CROPS list
+│   ├── api.ts              # typed client + retry/abort/timeout + COMMON_CROPS + makeTicket
+│   ├── image.ts            # client-side downscale + JPEG recompression for uploads
 │   └── i18n.tsx            # LanguageProvider, dictionaries (en / sw)
 ├── routes/
 │   ├── __root.tsx          # html shell, fonts, manifest, OG meta, providers
@@ -264,5 +265,6 @@ public/
 ├── manifest.webmanifest    # PWA manifest (display: standalone)
 └── app-icon.png            # 512×512 maskable icon
 ```
+
 
 That's the whole frontend. Anything else you want it to do (offline queue, history of past checks, Swahili voice prompts, a map of last-mile co-op offices) hooks cleanly into the same primitives: add a screen to the state machine, a key to the dictionary, and — if it needs the backend — a typed function in `lib/api.ts`.
