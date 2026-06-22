@@ -186,7 +186,7 @@ function SmartExportsApp() {
         <TopBar onReset={step !== "intro" ? reset : undefined} />
 
         <main className="flex-1">
-          {step === "intro" && <Intro onStart={() => setStep("capture")} />}
+          {step === "intro" && <Intro onStart={() => setStep("capture")} onPick={reCheckFromHistory} />}
           {step === "capture" && (
             <Capture onPhoto={onPhoto} onBack={() => { abortAll(); setStep("intro"); }} />
           )}
