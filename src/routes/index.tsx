@@ -777,6 +777,7 @@ function Result({
           href={shareUrl}
           target="_blank"
           rel="noreferrer noopener"
+          onClick={() => trackEvent("share_whatsapp", { risk: normalized })}
           className="inline-flex h-12 w-full items-center justify-center rounded-sm border border-foreground/15 bg-card text-[13px] font-medium tracking-tight text-foreground transition hover:border-foreground/40"
         >
           <WhatsAppIcon className="mr-2 h-4 w-4" />
