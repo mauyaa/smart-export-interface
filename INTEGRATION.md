@@ -70,13 +70,39 @@ interface ExtractLabelResponse {
 
 ### Error contract
 
-| Status | UI behavior                                                                 |
-| ------ | --------------------------------------------------------------------------- |
-| 200    | happy path                                                                   |
-| 404    | `/check` only → app auto-routes to the **Escalate** screen with the same product+crop pre-filled |
-| 429    | rate-limited; the server's `detail` is shown inline in red on the source screen |
-| 503    | DB or LLM unavailable; same inline red banner; user can retry without losing state |
-| other  | localized generic error ("Something went wrong. Please retry.")              |
+| Status         | UI behavior                                                                 |
+| -------------- | --------------------------------------------------------------------------- |
+| 200            | happy path                                                                   |
+| 404            | `/check` only → app auto-routes to the **Escalate** screen with the same product+crop pre-filled |
+| 429            | rate-limited; the server's `detail` is shown inline in red on the source screen |
+| 502/503/504    | gateway/DB/LLM unavailable; client **auto-retries once** with the "waking up" copy surfaced |
+| timeout/offline| `NetworkError` thrown; localized "Could not reach the server" banner with retry |
+| other          | localized generic error ("Something went wrong. Please retry.")              |
+
+### Resilience layer (`src/lib/api.ts`)
+
+Every API call goes through a single `request()` helper that adds:
+
+* **AbortSignal piping** — every call accepts a `signal` from the screen so the in-flight fetch is cancelled when the user hits Back, Retake, or Start over. The UI keeps a `Set<AbortController>` of in-flight requests and aborts them all on transition.
+* **Per-call timeout** — `/check` and `/escalate` cap at 45s, `/extract-label` at 60s (OCR is slower). A timeout becomes a `DOMException("TimeoutError")` and triggers the same retry path as a network failure.
+* **One automatic retry** on transient failure (5xx gateway codes or network/timeout). A second failure is wrapped in `NetworkError` so the UI can show a friendly message instead of "Failed to fetch".
+* **`onSlow` callback** — fires after 6s (8s for OCR). The UI uses this to surface "Server is waking up — first check of the day takes a bit longer." on Render free-tier cold starts.
+
+### Image compression (`src/lib/image.ts`)
+
+Phone photos are 3–8 MB raw. Before `extractLabel()` is called, `compressImage()` runs client-side:
+
+* Skips files under 500 KB and non-images (returned untouched).
+* Downscales the long edge to **1600 px**, re-encodes as JPEG at **quality 0.85** using `OffscreenCanvas` when available, falling back to a `<canvas>` element.
+* Returns the original file if compression would make it larger or fails for any reason — never blocks the user.
+
+Net effect on a 3G connection: ~20s upload → ~2s upload, and the preview thumbnail matches exactly what the server sees.
+
+### Escalation receipts
+
+`escalate()` generates a client-side ticket reference (`SX-XXXXXX`, Crockford base32, ~1 in a billion collision) and prepends it to `notes` so it's stored alongside the case in the backend. The Done screen shows the ticket in a bordered card with a copy button — the user has something concrete to quote when they follow up. When the backend adds a server-side ticket field, swap `makeTicket()` for the server value with no UI change.
+
+
 
 ---
 
