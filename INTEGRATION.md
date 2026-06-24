@@ -86,11 +86,13 @@ The vision model is configurable on the backend via `FEATHERLESS_VISION_MODEL` (
 | Status         | UI behavior                                                                 |
 | -------------- | --------------------------------------------------------------------------- |
 | 200            | happy path                                                                   |
+| 400            | `/extract-label` only → unsupported MIME or >20 MB; client-side compression keeps real users under both caps |
 | 404            | `/check` only → app auto-routes to the **Escalate** screen with the same product+crop pre-filled |
-| 429            | rate-limited; the server's `detail` is shown inline in red on the source screen |
-| 502/503/504    | gateway/DB/LLM unavailable; client **auto-retries once** with the "waking up" copy surfaced |
+| 429            | rate-limited (`/check` 10/min, `/escalate` 5/min, `/extract-label` 10/min, global 30/min); the server's `detail` is shown inline in red on the source screen |
+| 502/503/504    | gateway / Neo4j / Featherless unavailable; client **auto-retries once** with the "waking up" copy surfaced |
 | timeout/offline| `NetworkError` thrown; localized "Could not reach the server" banner with retry |
 | other          | localized generic error ("Something went wrong. Please retry.")              |
+
 
 ### Resilience layer (`src/lib/api.ts`)
 
