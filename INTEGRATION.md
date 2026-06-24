@@ -40,12 +40,14 @@ Override locally by exporting `VITE_SMARTEXPORTS_API=http://localhost:8000` befo
 
 All requests live in `src/lib/api.ts`. Each is typed against the live OpenAPI schema and throws a typed `ApiError(status, detail)` on non-2xx.
 
-| Screen      | Function           | Method · Path           | Request                                                | Response             |
-| ----------- | ------------------ | ----------------------- | ------------------------------------------------------ | -------------------- |
-| Capture     | `extractLabel(f)`  | `POST /extract-label`   | `multipart/form-data { file: image }`                  | `ExtractLabelResponse` |
-| Confirm/Run | `checkFertilizer`  | `POST /check`           | `{ fertilizer_name, crop_name }`                       | `ResultCard`         |
-| Escalate    | `escalate(payload)`| `POST /escalate`        | `{ fertilizer_name, crop_name, farmer_contact?, notes? }` | `{ ok: true }`     |
-| (boot)      | `checkHealth()`    | `GET /health`           | —                                                      | `boolean`            |
+| Screen      | Function           | Method · Path           | Request                                                | Response                                  | Server rate limit |
+| ----------- | ------------------ | ----------------------- | ------------------------------------------------------ | ----------------------------------------- | ----------------- |
+| Capture     | `extractLabel(f)`  | `POST /extract-label`   | `multipart/form-data { file: image }` (JPEG/PNG/WEBP, ≤20 MB) | `ExtractLabelResponse`                | 10 / min / IP     |
+| Confirm/Run | `checkFertilizer`  | `POST /check`           | `{ fertilizer_name, crop_name }`                       | `ResultCard` (server-cached 30 min)        | 10 / min / IP     |
+| Escalate    | `escalate(payload)`| `POST /escalate`        | `{ fertilizer_name, crop_name, farmer_contact?, notes? }` | `{ status: "received", message: string }` | 5 / min / IP      |
+| (boot)      | `checkHealth()`    | `GET /health`           | —                                                      | `{ status: "ok" }` → `true`                | global 30 / min   |
+
+Global cap is `30/minute/IP` (slowapi). Server also caches `/check` responses for 30 min keyed on `(resolved_fertilizer, crop)` — back-to-back identical checks skip Neo4j + LLM.
 
 ### Response shapes used by the UI
 
@@ -56,7 +58,7 @@ interface ResultCard {
   fertilizer: string;
   crop: string;
   risk_level: RiskLevel;
-  explanation: string;        // LLM-grounded plain-language paragraph
+  explanation: string;        // LLM-grounded plain-language paragraph (Llama 3.1)
   next_step: string;          // server-mapped from risk_level
   alternative_product: string | null;  // only set when risk_level === "Risky"
   evidence: Record<string, unknown>;   // graph path (debug/audit, not shown)
@@ -64,12 +66,20 @@ interface ResultCard {
 }
 
 interface ExtractLabelResponse {
-  product_name: string | null;        // can be null — UI prompts manual entry
-  possible_ingredients?: string[];    // surfaced as chips on the Confirm screen
-  confidence: string;
-  raw_model_output: string;
+  product_name: string | null;        // null when vision model can't read the label
+  possible_ingredients?: string[];    // surfaced as muted chips on the Confirm screen
+  confidence: "high" | "medium" | "low";
+  raw_model_output: string;           // kept for debugging — not rendered
+}
+
+interface EscalateResponse {
+  status: "received";
+  message: string;
 }
 ```
+
+The vision model is configurable on the backend via `FEATHERLESS_VISION_MODEL` (default `google/gemma-3-27b-it`); the explanation model via `FEATHERLESS_MODEL` (default `meta-llama/Meta-Llama-3.1-8B-Instruct`). Swapping either does not change the wire contract above.
+
 
 ### Error contract
 
