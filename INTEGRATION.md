@@ -2,7 +2,10 @@
 
 This is the operational handbook for the SmartExports frontend. It explains exactly how the UI joins the FastAPI service, which contract each screen depends on, and the design intent behind every visible element so anyone on the team can change it without breaking the system.
 
+**Backend repo:** [`mauyaa/smart-export`](https://github.com/mauyaa/smart-export) — FastAPI in `api/`, Cypher in `cypher/`, pytest smoke suite in `tests/`, CI in `.github/workflows/`. Live at <https://smartexports-api.onrender.com> · OpenAPI: <https://smartexports-api.onrender.com/docs>.
+
 ---
+
 
 ## 1. Architecture at a glance
 
