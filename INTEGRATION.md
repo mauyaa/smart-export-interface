@@ -328,3 +328,42 @@ public/
 ```
 
 That's the whole frontend. Anything else you want it to do (offline queue, server-side history, Swahili voice prompts, a map of last-mile co-op offices) hooks cleanly into the same primitives: add a screen to the state machine, a key to the dictionary, an event in `telemetry.ts`, and — if it needs the backend — a typed function in `lib/api.ts`.
+
+---
+
+## 12. Codex / agent prompt — connect the two repos & deploy
+
+Drop this verbatim into Codex (or any coding agent) when you want it to wire the Lovable-synced frontend repo to `mauyaa/smart-export` and ship both to production. It assumes the agent has shell access, network egress, and write access to both repos plus the Render and Cloudflare/Vercel dashboards (or environment-variable equivalents).
+
+> **Role.** You are a release engineer for SmartExports. Two repos exist:
+> – **Backend:** `https://github.com/mauyaa/smart-export` — FastAPI in `api/`, Cypher in `cypher/`, pytest in `tests/`, GitHub Actions CI, deployed on Render at `https://smartexports-api.onrender.com`.
+> – **Frontend:** the Lovable-managed repo for SmartExports (TanStack Start v1 + React 19 + Tailwind v4, bun). Wire shape in `INTEGRATION.md`.
+>
+> **Goal.** Make the frontend talk to the live backend in production, the preview, and local dev, then publish the frontend. Do not modify backend business logic, Cypher, or LLM prompts.
+>
+> **Tasks, in order.**
+> 1. Clone both repos. Read `INTEGRATION.md` and `api/main.py` end-to-end before editing. Confirm the four endpoints (`POST /check`, `POST /extract-label`, `POST /escalate`, `GET /health`) match `src/lib/api.ts` types exactly — including the `escalate` response shape `{ status: "received", message: string }`, the `ExtractLabelResponse.confidence` enum `"high"|"medium"|"low"`, the 20 MB / JPEG-PNG-WEBP limit, and the per-route rate limits (10/10/5/min, global 30/min). If anything drifts, update `src/lib/api.ts` to match the backend, not the other way around.
+> 2. In `mauyaa/smart-export` open `api/.env.example` and `api/main.py`. Verify `CORS_ORIGINS` includes, comma-separated: `http://localhost:8080`, the Lovable preview origin `https://id-preview--<project-id>.lovable.app`, the published Lovable origin (e.g. `https://smart-export.lovable.app`), and any configured custom domain. If missing, open a PR adding them to `.env.example` AND set the same value on Render → Environment for the `smartexports-api` service. Trigger a redeploy and wait for `/health` to return `{"status":"ok"}`.
+> 3. In the frontend repo, ensure `VITE_SMARTEXPORTS_API` is **unset in production** (it defaults to `https://smartexports-api.onrender.com`). For local dev document `VITE_SMARTEXPORTS_API=http://localhost:8000` in `.env.local.example`. Do not commit any real secrets — the frontend has none.
+> 4. Run the contract probe locally before publishing:
+>    ```bash
+>    bun install
+>    bun run build           # must succeed
+>    bunx tsgo --noEmit      # strict TS, must succeed
+>    curl -sf https://smartexports-api.onrender.com/health
+>    curl -sf -X POST https://smartexports-api.onrender.com/check \
+>      -H 'content-type: application/json' \
+>      -d '{"fertilizer_name":"Urea","crop_name":"maize"}' | jq .risk_level
+>    ```
+>    First `/check` may take ~30 s on a cold Render dyno — that is expected; the UI's `onSlow` copy covers it. If `curl` returns CORS-blocked from a browser, jump back to step 2.
+> 5. Smoke-test the live UI from a headless browser against `http://localhost:8080`: open the app, upload a sample label image to Capture, confirm the OCR result populates Confirm, run `/check` for `(Urea, maize)`, then submit an Escalate from a forced-404 product like `zzz-not-real`. Capture screenshots into `/tmp/smartexports-smoke/` and attach them to the PR description.
+> 6. Publish the frontend. If using Lovable: click Publish (or call the publish tool) — Lovable handles Cloudflare Pages. If using Vercel/Netlify/Cloudflare manually: `bun run build`, then deploy `dist/` to the chosen target. Confirm the published origin is in `CORS_ORIGINS` before announcing the URL.
+> 7. Post-deploy verification: hit the published URL, run the same Capture → Confirm → Check → Escalate flow, and `JSON.parse(localStorage["smartexports.events"])` to confirm telemetry events fire (`app_open`, `ocr_success`, `check_result`, `escalate_done`). Open a PR titled `chore(release): wire frontend ↔ smartexports-api` against the Lovable-synced frontend repo with the screenshots, the `curl` outputs, and a one-paragraph summary.
+>
+> **Guardrails.**
+> – Never hardcode hex colors, fonts, or copy in components — go through tokens in `src/styles.css` and the `t.*` dictionary in `src/lib/i18n.tsx`.
+> – Do not introduce `useEffect + fetch` for initial render; the existing client uses an abortable `request()` helper — extend it instead of bypassing it.
+> – Do not push into `mauyaa/smart-export`'s root from the frontend repo. Backend changes (e.g. CORS) go through the backend repo's PR flow.
+> – Keep secrets server-side. `FEATHERLESS_API_KEY` and `NEO4J_PASSWORD` live only on Render. The frontend has zero credentials.
+> – If a step fails, stop and report — do not paper over a broken contract by mutating the UI.
+
