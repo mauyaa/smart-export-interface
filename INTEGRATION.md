@@ -263,26 +263,43 @@ VITE_SMARTEXPORTS_API=http://localhost:8000 bun dev
 bun run build
 ```
 
-The dev server prints `http://localhost:8080`. CORS for that origin is already in the backend's default `CORS_ORIGINS`.
+The dev server prints `http://localhost:8080`. The backend's default `CORS_ORIGINS` only whitelists `localhost:3000`, `127.0.0.1:3000`, and `localhost:5173`, so for local frontend dev against the live API either:
+
+* run the API locally with `CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080` in `api/.env`, **or**
+* on Render → `smartexports-api` → Environment, set `CORS_ORIGINS` to include `http://localhost:8080` and the deployed frontend origin (e.g. `https://smart-export.lovable.app`, the preview `https://id-preview--<project-id>.lovable.app`, and any custom domain).
+
+The backend re-reads `CORS_ORIGINS` at boot — Render redeploys automatically when the env var changes.
+
+To run the backend locally end-to-end:
+
+```bash
+git clone https://github.com/mauyaa/smart-export.git
+cd smart-export
+cp api/.env.example api/.env   # fill NEO4J_*, FEATHERLESS_API_KEY
+pip install -r api/requirements.txt
+uvicorn api.main:app --reload --port 8000
+```
+
+Then in this repo: `VITE_SMARTEXPORTS_API=http://localhost:8000 bun dev`.
 
 ---
 
-## 10. Shipping to `mauyaa/smart-export`
+## 10. Shipping & deployment
 
-Lovable creates and syncs a **new** repository — it cannot push directly to a pre-existing repo. Flow:
+**Backend** — already live on Render at `https://smartexports-api.onrender.com`, auto-deploys from `main` on `mauyaa/smart-export`. CI (`.github/workflows/ci.yml`) runs the pytest smoke suite on every push. Free tier cold-starts after ~15 min idle; the frontend's `onSlow` retry copy is designed for that.
 
-1. In the Lovable composer: **+ → GitHub → Connect project → Create Repository**.
-2. Lovable spins up `<your-org>/smart-export-frontend` (or whatever name you pick) and starts two-way sync — every change in Lovable is a commit on `main` of that repo, and every push to `main` re-renders the Lovable preview.
-3. To merge into `mauyaa/smart-export`, clone the new repo locally and copy the source (everything except `.git`) into a `frontend/` folder of `smart-export`, or add it as a Git submodule. Suggested copy command from the new repo's root:
+**Frontend** — this Lovable project is the canonical source. The Lovable ↔ GitHub integration creates a fresh repo (e.g. `mauyaa/smart-export-frontend`) and syncs `main` two-ways. It cannot push into the existing non-empty `mauyaa/smart-export`. Two viable layouts:
+
+1. **Two repos (recommended)** — keep `mauyaa/smart-export` for the API and let Lovable manage `mauyaa/smart-export-frontend`. CORS allow-list joins them. This preserves continuous sync from Lovable.
+2. **Monorepo merge** — clone the Lovable repo and `rsync` the source into `mauyaa/smart-export/frontend/`. This breaks Lovable sync; only do it if active Lovable iteration is finished.
 
    ```bash
    rsync -a --exclude='.git' --exclude='node_modules' --exclude='dist' \
      ./ ../smart-export/frontend/
    ```
 
-4. From then on, the FastAPI service stays in `smart-export/api` and the frontend either lives alongside it under `smart-export/frontend` (manual sync) or stays in the Lovable-synced repo (continuous sync).
+Hosting targets that work out of the box for the built frontend: Cloudflare Pages (default Lovable publish target), Vercel, Netlify, or any static host fed by `bun run build`. TanStack Start emits a prerendered SSR-friendly bundle.
 
-CI / deploy targets that work out of the box: Cloudflare Pages, Vercel, Netlify, or `bun run build` → static hosting. The build emits a fully-prerendered SSR-friendly bundle thanks to TanStack Start.
 
 ---
 
