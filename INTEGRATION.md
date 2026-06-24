@@ -2,7 +2,10 @@
 
 This is the operational handbook for the SmartExports frontend. It explains exactly how the UI joins the FastAPI service, which contract each screen depends on, and the design intent behind every visible element so anyone on the team can change it without breaking the system.
 
+**Backend repo:** [`mauyaa/smart-export`](https://github.com/mauyaa/smart-export) — FastAPI in `api/`, Cypher in `cypher/`, pytest smoke suite in `tests/`, CI in `.github/workflows/`. Live at <https://smartexports-api.onrender.com> · OpenAPI: <https://smartexports-api.onrender.com/docs>.
+
 ---
+
 
 ## 1. Architecture at a glance
 
@@ -37,12 +40,14 @@ Override locally by exporting `VITE_SMARTEXPORTS_API=http://localhost:8000` befo
 
 All requests live in `src/lib/api.ts`. Each is typed against the live OpenAPI schema and throws a typed `ApiError(status, detail)` on non-2xx.
 
-| Screen      | Function           | Method · Path           | Request                                                | Response             |
-| ----------- | ------------------ | ----------------------- | ------------------------------------------------------ | -------------------- |
-| Capture     | `extractLabel(f)`  | `POST /extract-label`   | `multipart/form-data { file: image }`                  | `ExtractLabelResponse` |
-| Confirm/Run | `checkFertilizer`  | `POST /check`           | `{ fertilizer_name, crop_name }`                       | `ResultCard`         |
-| Escalate    | `escalate(payload)`| `POST /escalate`        | `{ fertilizer_name, crop_name, farmer_contact?, notes? }` | `{ ok: true }`     |
-| (boot)      | `checkHealth()`    | `GET /health`           | —                                                      | `boolean`            |
+| Screen      | Function           | Method · Path           | Request                                                | Response                                  | Server rate limit |
+| ----------- | ------------------ | ----------------------- | ------------------------------------------------------ | ----------------------------------------- | ----------------- |
+| Capture     | `extractLabel(f)`  | `POST /extract-label`   | `multipart/form-data { file: image }` (JPEG/PNG/WEBP, ≤20 MB) | `ExtractLabelResponse`                | 10 / min / IP     |
+| Confirm/Run | `checkFertilizer`  | `POST /check`           | `{ fertilizer_name, crop_name }`                       | `ResultCard` (server-cached 30 min)        | 10 / min / IP     |
+| Escalate    | `escalate(payload)`| `POST /escalate`        | `{ fertilizer_name, crop_name, farmer_contact?, notes? }` | `{ status: "received", message: string }` | 5 / min / IP      |
+| (boot)      | `checkHealth()`    | `GET /health`           | —                                                      | `{ status: "ok" }` → `true`                | global 30 / min   |
+
+Global cap is `30/minute/IP` (slowapi). Server also caches `/check` responses for 30 min keyed on `(resolved_fertilizer, crop)` — back-to-back identical checks skip Neo4j + LLM.
 
 ### Response shapes used by the UI
 
@@ -53,7 +58,7 @@ interface ResultCard {
   fertilizer: string;
   crop: string;
   risk_level: RiskLevel;
-  explanation: string;        // LLM-grounded plain-language paragraph
+  explanation: string;        // LLM-grounded plain-language paragraph (Llama 3.1)
   next_step: string;          // server-mapped from risk_level
   alternative_product: string | null;  // only set when risk_level === "Risky"
   evidence: Record<string, unknown>;   // graph path (debug/audit, not shown)
@@ -61,23 +66,33 @@ interface ResultCard {
 }
 
 interface ExtractLabelResponse {
-  product_name: string | null;        // can be null — UI prompts manual entry
-  possible_ingredients?: string[];    // surfaced as chips on the Confirm screen
-  confidence: string;
-  raw_model_output: string;
+  product_name: string | null;        // null when vision model can't read the label
+  possible_ingredients?: string[];    // surfaced as muted chips on the Confirm screen
+  confidence: "high" | "medium" | "low";
+  raw_model_output: string;           // kept for debugging — not rendered
+}
+
+interface EscalateResponse {
+  status: "received";
+  message: string;
 }
 ```
+
+The vision model is configurable on the backend via `FEATHERLESS_VISION_MODEL` (default `google/gemma-3-27b-it`); the explanation model via `FEATHERLESS_MODEL` (default `meta-llama/Meta-Llama-3.1-8B-Instruct`). Swapping either does not change the wire contract above.
+
 
 ### Error contract
 
 | Status         | UI behavior                                                                 |
 | -------------- | --------------------------------------------------------------------------- |
 | 200            | happy path                                                                   |
+| 400            | `/extract-label` only → unsupported MIME or >20 MB; client-side compression keeps real users under both caps |
 | 404            | `/check` only → app auto-routes to the **Escalate** screen with the same product+crop pre-filled |
-| 429            | rate-limited; the server's `detail` is shown inline in red on the source screen |
-| 502/503/504    | gateway/DB/LLM unavailable; client **auto-retries once** with the "waking up" copy surfaced |
+| 429            | rate-limited (`/check` 10/min, `/escalate` 5/min, `/extract-label` 10/min, global 30/min); the server's `detail` is shown inline in red on the source screen |
+| 502/503/504    | gateway / Neo4j / Featherless unavailable; client **auto-retries once** with the "waking up" copy surfaced |
 | timeout/offline| `NetworkError` thrown; localized "Could not reach the server" banner with retry |
 | other          | localized generic error ("Something went wrong. Please retry.")              |
+
 
 ### Resilience layer (`src/lib/api.ts`)
 
@@ -248,26 +263,43 @@ VITE_SMARTEXPORTS_API=http://localhost:8000 bun dev
 bun run build
 ```
 
-The dev server prints `http://localhost:8080`. CORS for that origin is already in the backend's default `CORS_ORIGINS`.
+The dev server prints `http://localhost:8080`. The backend's default `CORS_ORIGINS` only whitelists `localhost:3000`, `127.0.0.1:3000`, and `localhost:5173`, so for local frontend dev against the live API either:
+
+* run the API locally with `CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080` in `api/.env`, **or**
+* on Render → `smartexports-api` → Environment, set `CORS_ORIGINS` to include `http://localhost:8080` and the deployed frontend origin (e.g. `https://smart-export.lovable.app`, the preview `https://id-preview--<project-id>.lovable.app`, and any custom domain).
+
+The backend re-reads `CORS_ORIGINS` at boot — Render redeploys automatically when the env var changes.
+
+To run the backend locally end-to-end:
+
+```bash
+git clone https://github.com/mauyaa/smart-export.git
+cd smart-export
+cp api/.env.example api/.env   # fill NEO4J_*, FEATHERLESS_API_KEY
+pip install -r api/requirements.txt
+uvicorn api.main:app --reload --port 8000
+```
+
+Then in this repo: `VITE_SMARTEXPORTS_API=http://localhost:8000 bun dev`.
 
 ---
 
-## 10. Shipping to `mauyaa/smart-export`
+## 10. Shipping & deployment
 
-Lovable creates and syncs a **new** repository — it cannot push directly to a pre-existing repo. Flow:
+**Backend** — already live on Render at `https://smartexports-api.onrender.com`, auto-deploys from `main` on `mauyaa/smart-export`. CI (`.github/workflows/ci.yml`) runs the pytest smoke suite on every push. Free tier cold-starts after ~15 min idle; the frontend's `onSlow` retry copy is designed for that.
 
-1. In the Lovable composer: **+ → GitHub → Connect project → Create Repository**.
-2. Lovable spins up `<your-org>/smart-export-frontend` (or whatever name you pick) and starts two-way sync — every change in Lovable is a commit on `main` of that repo, and every push to `main` re-renders the Lovable preview.
-3. To merge into `mauyaa/smart-export`, clone the new repo locally and copy the source (everything except `.git`) into a `frontend/` folder of `smart-export`, or add it as a Git submodule. Suggested copy command from the new repo's root:
+**Frontend** — this Lovable project is the canonical source. The Lovable ↔ GitHub integration creates a fresh repo (e.g. `mauyaa/smart-export-frontend`) and syncs `main` two-ways. It cannot push into the existing non-empty `mauyaa/smart-export`. Two viable layouts:
+
+1. **Two repos (recommended)** — keep `mauyaa/smart-export` for the API and let Lovable manage `mauyaa/smart-export-frontend`. CORS allow-list joins them. This preserves continuous sync from Lovable.
+2. **Monorepo merge** — clone the Lovable repo and `rsync` the source into `mauyaa/smart-export/frontend/`. This breaks Lovable sync; only do it if active Lovable iteration is finished.
 
    ```bash
    rsync -a --exclude='.git' --exclude='node_modules' --exclude='dist' \
      ./ ../smart-export/frontend/
    ```
 
-4. From then on, the FastAPI service stays in `smart-export/api` and the frontend either lives alongside it under `smart-export/frontend` (manual sync) or stays in the Lovable-synced repo (continuous sync).
+Hosting targets that work out of the box for the built frontend: Cloudflare Pages (default Lovable publish target), Vercel, Netlify, or any static host fed by `bun run build`. TanStack Start emits a prerendered SSR-friendly bundle.
 
-CI / deploy targets that work out of the box: Cloudflare Pages, Vercel, Netlify, or `bun run build` → static hosting. The build emits a fully-prerendered SSR-friendly bundle thanks to TanStack Start.
 
 ---
 
@@ -296,3 +328,42 @@ public/
 ```
 
 That's the whole frontend. Anything else you want it to do (offline queue, server-side history, Swahili voice prompts, a map of last-mile co-op offices) hooks cleanly into the same primitives: add a screen to the state machine, a key to the dictionary, an event in `telemetry.ts`, and — if it needs the backend — a typed function in `lib/api.ts`.
+
+---
+
+## 12. Codex / agent prompt — connect the two repos & deploy
+
+Drop this verbatim into Codex (or any coding agent) when you want it to wire the Lovable-synced frontend repo to `mauyaa/smart-export` and ship both to production. It assumes the agent has shell access, network egress, and write access to both repos plus the Render and Cloudflare/Vercel dashboards (or environment-variable equivalents).
+
+> **Role.** You are a release engineer for SmartExports. Two repos exist:
+> – **Backend:** `https://github.com/mauyaa/smart-export` — FastAPI in `api/`, Cypher in `cypher/`, pytest in `tests/`, GitHub Actions CI, deployed on Render at `https://smartexports-api.onrender.com`.
+> – **Frontend:** the Lovable-managed repo for SmartExports (TanStack Start v1 + React 19 + Tailwind v4, bun). Wire shape in `INTEGRATION.md`.
+>
+> **Goal.** Make the frontend talk to the live backend in production, the preview, and local dev, then publish the frontend. Do not modify backend business logic, Cypher, or LLM prompts.
+>
+> **Tasks, in order.**
+> 1. Clone both repos. Read `INTEGRATION.md` and `api/main.py` end-to-end before editing. Confirm the four endpoints (`POST /check`, `POST /extract-label`, `POST /escalate`, `GET /health`) match `src/lib/api.ts` types exactly — including the `escalate` response shape `{ status: "received", message: string }`, the `ExtractLabelResponse.confidence` enum `"high"|"medium"|"low"`, the 20 MB / JPEG-PNG-WEBP limit, and the per-route rate limits (10/10/5/min, global 30/min). If anything drifts, update `src/lib/api.ts` to match the backend, not the other way around.
+> 2. In `mauyaa/smart-export` open `api/.env.example` and `api/main.py`. Verify `CORS_ORIGINS` includes, comma-separated: `http://localhost:8080`, the Lovable preview origin `https://id-preview--<project-id>.lovable.app`, the published Lovable origin (e.g. `https://smart-export.lovable.app`), and any configured custom domain. If missing, open a PR adding them to `.env.example` AND set the same value on Render → Environment for the `smartexports-api` service. Trigger a redeploy and wait for `/health` to return `{"status":"ok"}`.
+> 3. In the frontend repo, ensure `VITE_SMARTEXPORTS_API` is **unset in production** (it defaults to `https://smartexports-api.onrender.com`). For local dev document `VITE_SMARTEXPORTS_API=http://localhost:8000` in `.env.local.example`. Do not commit any real secrets — the frontend has none.
+> 4. Run the contract probe locally before publishing:
+>    ```bash
+>    bun install
+>    bun run build           # must succeed
+>    bunx tsgo --noEmit      # strict TS, must succeed
+>    curl -sf https://smartexports-api.onrender.com/health
+>    curl -sf -X POST https://smartexports-api.onrender.com/check \
+>      -H 'content-type: application/json' \
+>      -d '{"fertilizer_name":"Urea","crop_name":"maize"}' | jq .risk_level
+>    ```
+>    First `/check` may take ~30 s on a cold Render dyno — that is expected; the UI's `onSlow` copy covers it. If `curl` returns CORS-blocked from a browser, jump back to step 2.
+> 5. Smoke-test the live UI from a headless browser against `http://localhost:8080`: open the app, upload a sample label image to Capture, confirm the OCR result populates Confirm, run `/check` for `(Urea, maize)`, then submit an Escalate from a forced-404 product like `zzz-not-real`. Capture screenshots into `/tmp/smartexports-smoke/` and attach them to the PR description.
+> 6. Publish the frontend. If using Lovable: click Publish (or call the publish tool) — Lovable handles Cloudflare Pages. If using Vercel/Netlify/Cloudflare manually: `bun run build`, then deploy `dist/` to the chosen target. Confirm the published origin is in `CORS_ORIGINS` before announcing the URL.
+> 7. Post-deploy verification: hit the published URL, run the same Capture → Confirm → Check → Escalate flow, and `JSON.parse(localStorage["smartexports.events"])` to confirm telemetry events fire (`app_open`, `ocr_success`, `check_result`, `escalate_done`). Open a PR titled `chore(release): wire frontend ↔ smartexports-api` against the Lovable-synced frontend repo with the screenshots, the `curl` outputs, and a one-paragraph summary.
+>
+> **Guardrails.**
+> – Never hardcode hex colors, fonts, or copy in components — go through tokens in `src/styles.css` and the `t.*` dictionary in `src/lib/i18n.tsx`.
+> – Do not introduce `useEffect + fetch` for initial render; the existing client uses an abortable `request()` helper — extend it instead of bypassing it.
+> – Do not push into `mauyaa/smart-export`'s root from the frontend repo. Backend changes (e.g. CORS) go through the backend repo's PR flow.
+> – Keep secrets server-side. `FEATHERLESS_API_KEY` and `NEO4J_PASSWORD` live only on Render. The frontend has zero credentials.
+> – If a step fails, stop and report — do not paper over a broken contract by mutating the UI.
+
