@@ -857,7 +857,8 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
 function Escalate({
   product, crop, done, onSubmit, onDone,
 }: {
-  product: string; crop: string; done: { ticket: string } | null;
+  product: string; crop: string;
+  done: { ticket: string; expert?: string; org?: string; message?: string } | null;
   onSubmit: (contact: string, notes: string) => Promise<void>;
   onDone: () => void;
 }) {
