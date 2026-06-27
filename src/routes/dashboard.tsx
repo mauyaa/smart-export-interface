@@ -14,7 +14,7 @@ function DashboardLayout() {
 
   useEffect(() => {
     const s = getSession();
-    if (!s) navigate({ to: "/login" });
+    if (!s) navigate({ to: "/" });
     else setExpert(s);
   }, [navigate]);
 
@@ -22,7 +22,7 @@ function DashboardLayout() {
 
   function signOut() {
     clearSession();
-    navigate({ to: "/login" });
+    navigate({ to: "/" });
   }
 
   return (
