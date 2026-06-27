@@ -14,7 +14,7 @@ function DashboardLayout() {
 
   useEffect(() => {
     const s = getSession();
-    if (!s) navigate({ to: "/login" });
+    if (!s) navigate({ to: "/" });
     else setExpert(s);
   }, [navigate]);
 
