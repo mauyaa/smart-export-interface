@@ -184,7 +184,7 @@ function SmartExportsApp() {
         org: r.expert_organization,
         message: r.message,
       });
-      trackEvent("escalate_done", { ok: true, matched: r.expert_matched });
+      trackEvent("escalate_done", { ok: true });
     } finally {
       done();
     }
