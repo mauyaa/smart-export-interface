@@ -172,11 +172,19 @@ function SmartExportsApp() {
           crop_name: crop,
           farmer_contact: contact || undefined,
           notes: notes || undefined,
+          risk_level: result?.risk_level,
+          explanation: result?.explanation,
+          substances: ingredients.length ? ingredients : undefined,
         },
         { signal },
       );
-      setEscalated({ ticket: r.ticket });
-      trackEvent("escalate_done", { ok: true });
+      setEscalated({
+        ticket: r.ticket,
+        expert: r.expert_name,
+        org: r.expert_organization,
+        message: r.message,
+      });
+      trackEvent("escalate_done", { ok: true, matched: r.expert_matched });
     } finally {
       done();
     }
