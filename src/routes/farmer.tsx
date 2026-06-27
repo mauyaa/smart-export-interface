@@ -914,6 +914,21 @@ function Escalate({
           <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t.escalate.ticketHint}</p>
         </div>
 
+        {done.expert && (
+          <div className="mx-auto mt-5 max-w-[22rem] rounded-md border border-border bg-card px-5 py-4 text-left">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              Matched expert
+            </p>
+            <p className="mt-2 font-display text-[18px] tracking-tight">{done.expert}</p>
+            {done.org && <p className="text-[12px] text-muted-foreground">{done.org}</p>}
+            {done.message && (
+              <p className="mt-3 text-[12px] leading-relaxed text-foreground/80">{done.message}</p>
+            )}
+          </div>
+        )}
+
+
+
         <div className="mt-10"><PrimaryButton onClick={onDone}>{t.escalate.done}</PrimaryButton></div>
       </section>
     );
