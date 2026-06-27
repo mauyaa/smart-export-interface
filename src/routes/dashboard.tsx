@@ -22,7 +22,7 @@ function DashboardLayout() {
 
   function signOut() {
     clearSession();
-    navigate({ to: "/login" });
+    navigate({ to: "/" });
   }
 
   return (
