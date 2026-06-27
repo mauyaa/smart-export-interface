@@ -147,30 +147,53 @@ export async function extractLabel(
   return res.json();
 }
 
+export interface EscalateInput {
+  fertilizer_name: string;
+  crop_name: string;
+  farmer_name?: string;
+  farmer_contact?: string;
+  farmer_county?: string;
+  risk_level?: string;
+  explanation?: string;
+  substances?: string[];
+  notes?: string;
+}
+
+export interface EscalateResponse {
+  ok: boolean;
+  ticket: string;
+  expert_matched: boolean;
+  expert_name?: string;
+  expert_organization?: string;
+  message?: string;
+}
+
 export async function escalate(
-  input: {
-    fertilizer_name: string;
-    crop_name: string;
-    farmer_contact?: string;
-    notes?: string;
-  },
+  input: EscalateInput,
   opts: RequestOptions = {},
-): Promise<{ ok: boolean; ticket: string }> {
-  // Client-generated ticket reference (backend doesn't return one yet).
-  const ticket = makeTicket();
-  const payload = { ...input, notes: input.notes ? `[${ticket}] ${input.notes}` : `[${ticket}]` };
+): Promise<EscalateResponse> {
   const res = await request(
     "/escalate",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(input),
     },
     opts,
   );
   if (!res.ok) await parseError(res);
-  await res.json().catch(() => undefined);
-  return { ok: true, ticket };
+  const data = await res.json().catch(() => ({} as Record<string, unknown>));
+  const ticket =
+    (typeof data?.escalation_id === "string" && data.escalation_id) || makeTicket();
+  return {
+    ok: true,
+    ticket,
+    expert_matched: Boolean(data?.expert_matched),
+    expert_name: typeof data?.expert_name === "string" ? data.expert_name : undefined,
+    expert_organization:
+      typeof data?.expert_organization === "string" ? data.expert_organization : undefined,
+    message: typeof data?.message === "string" ? data.message : undefined,
+  };
 }
 
 export async function checkHealth(): Promise<boolean> {

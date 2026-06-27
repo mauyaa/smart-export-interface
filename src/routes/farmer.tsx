@@ -45,7 +45,7 @@ function SmartExportsApp() {
   const [crop, setCrop] = useState<string>("");
   const [result, setResult] = useState<ResultCard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [escalated, setEscalated] = useState<{ ticket: string } | null>(null);
+  const [escalated, setEscalated] = useState<{ ticket: string; expert?: string; org?: string; message?: string } | null>(null);
   const [slow, setSlow] = useState(false);
 
   // Track every in-flight request so we can cancel on back / reset / unmount.
@@ -172,10 +172,18 @@ function SmartExportsApp() {
           crop_name: crop,
           farmer_contact: contact || undefined,
           notes: notes || undefined,
+          risk_level: result?.risk_level,
+          explanation: result?.explanation,
+          substances: ingredients.length ? ingredients : undefined,
         },
         { signal },
       );
-      setEscalated({ ticket: r.ticket });
+      setEscalated({
+        ticket: r.ticket,
+        expert: r.expert_name,
+        org: r.expert_organization,
+        message: r.message,
+      });
       trackEvent("escalate_done", { ok: true });
     } finally {
       done();
@@ -849,7 +857,8 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
 function Escalate({
   product, crop, done, onSubmit, onDone,
 }: {
-  product: string; crop: string; done: { ticket: string } | null;
+  product: string; crop: string;
+  done: { ticket: string; expert?: string; org?: string; message?: string } | null;
   onSubmit: (contact: string, notes: string) => Promise<void>;
   onDone: () => void;
 }) {
@@ -904,6 +913,21 @@ function Escalate({
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t.escalate.ticketHint}</p>
         </div>
+
+        {done.expert && (
+          <div className="mx-auto mt-5 max-w-[22rem] rounded-md border border-border bg-card px-5 py-4 text-left">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              Matched expert
+            </p>
+            <p className="mt-2 font-display text-[18px] tracking-tight">{done.expert}</p>
+            {done.org && <p className="text-[12px] text-muted-foreground">{done.org}</p>}
+            {done.message && (
+              <p className="mt-3 text-[12px] leading-relaxed text-foreground/80">{done.message}</p>
+            )}
+          </div>
+        )}
+
+
 
         <div className="mt-10"><PrimaryButton onClick={onDone}>{t.escalate.done}</PrimaryButton></div>
       </section>
