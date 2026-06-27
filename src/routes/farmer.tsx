@@ -45,7 +45,7 @@ function SmartExportsApp() {
   const [crop, setCrop] = useState<string>("");
   const [result, setResult] = useState<ResultCard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [escalated, setEscalated] = useState<{ ticket: string } | null>(null);
+  const [escalated, setEscalated] = useState<{ ticket: string; expert?: string; org?: string; message?: string } | null>(null);
   const [slow, setSlow] = useState(false);
 
   // Track every in-flight request so we can cancel on back / reset / unmount.
