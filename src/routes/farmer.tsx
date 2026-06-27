@@ -19,7 +19,7 @@ import { openRearCamera, captureFrame, type CameraSession } from "@/lib/camera";
 import ambientLeaves from "@/assets/ambient-leaves.jpg.asset.json";
 
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/farmer")({
   head: () => ({
     meta: [
       { title: "SmartExports — EU compliance for Kenyan fertilizers" },
