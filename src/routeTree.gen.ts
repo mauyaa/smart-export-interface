@@ -13,6 +13,7 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as FarmerRouteImport } from './routes/farmer'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardIdRouteImport } from './routes/dashboard.$id'
 
@@ -36,6 +37,11 @@ const DashboardRoute = DashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -48,6 +54,7 @@ const DashboardIdRoute = DashboardIdRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
+  '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/farmer': typeof FarmerRoute
   '/signup': typeof SignupRoute
@@ -56,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRoutesByTo {
+  '/': typeof IndexRoute
   '/farmer': typeof FarmerRoute
   '/signup': typeof SignupRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
@@ -64,6 +72,7 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/farmer': typeof FarmerRoute
   '/signup': typeof SignupRoute
@@ -74,6 +83,7 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
+    | '/'
     | '/dashboard'
     | '/farmer'
     | '/signup'
@@ -81,9 +91,16 @@ export interface FileRouteTypes {
     | '/dashboard/$id'
     | '/dashboard/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/farmer' | '/signup' | '/sitemap.xml' | '/dashboard/$id' | '/dashboard'
+  to:
+    | '/'
+    | '/farmer'
+    | '/signup'
+    | '/sitemap.xml'
+    | '/dashboard/$id'
+    | '/dashboard'
   id:
     | '__root__'
+    | '/'
     | '/dashboard'
     | '/farmer'
     | '/signup'
@@ -93,6 +110,7 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
+  IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRouteWithChildren
   FarmerRoute: typeof FarmerRoute
   SignupRoute: typeof SignupRoute
@@ -129,6 +147,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/': {
       id: '/dashboard/'
       path: '/'
@@ -161,6 +186,7 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
 )
 
 const rootRouteChildren: RootRouteChildren = {
+  IndexRoute: IndexRoute,
   DashboardRoute: DashboardRouteWithChildren,
   FarmerRoute: FarmerRoute,
   SignupRoute: SignupRoute,
